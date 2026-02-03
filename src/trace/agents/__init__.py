@@ -11,6 +11,7 @@ Available agents:
 These agents serve as reference implementations for building custom agents.
 """
 
-# Exports will be added as modules are implemented:
-# - ReverseAgent (reverse.py)
-# - UppercaseAgent (uppercase.py)
+from trace.agents.reverse import ReverseAgent
+from trace.agents.uppercase import UppercaseAgent
+
+__all__ = ["ReverseAgent", "UppercaseAgent"]
