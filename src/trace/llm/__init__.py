@@ -12,6 +12,13 @@ Available providers:
 - (Future) ClaudeProvider: Anthropic Claude API
 """
 
-# Exports will be added as modules are implemented:
-# - LLMProvider (base.py)
-# - OllamaProvider (ollama.py)
+from trace.llm.base import LLMProvider, LLMProviderProtocol, LLMResponse, LLMError
+from trace.llm.ollama import OllamaProvider
+
+__all__ = [
+    "LLMProvider",
+    "LLMProviderProtocol",
+    "LLMResponse",
+    "LLMError",
+    "OllamaProvider",
+]
