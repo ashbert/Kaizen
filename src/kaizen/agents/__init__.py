@@ -1,5 +1,5 @@
 """
-Built-in agents for Trace.
+Built-in agents for Kaizen.
 
 This module contains example/toy agents that demonstrate the Agent protocol
 and can be used for testing the session substrate.
@@ -11,7 +11,7 @@ Available agents:
 These agents serve as reference implementations for building custom agents.
 """
 
-from trace.agents.reverse import ReverseAgent
-from trace.agents.uppercase import UppercaseAgent
+from kaizen.agents.reverse import ReverseAgent
+from kaizen.agents.uppercase import UppercaseAgent
 
 __all__ = ["ReverseAgent", "UppercaseAgent"]

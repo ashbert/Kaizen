@@ -1,5 +1,5 @@
 """
-LLM Provider base classes for Trace.
+LLM Provider base classes for Kaizen.
 
 This module defines the abstract interface for LLM providers that can
 be used by the Planner to generate capability call sequences.

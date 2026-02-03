@@ -1,5 +1,5 @@
 """
-LLM Provider abstractions for Trace.
+LLM Provider abstractions for Kaizen.
 
 This module contains the LLM provider protocol and implementations
 for various backends (Ollama, Claude, etc.).
@@ -12,8 +12,8 @@ Available providers:
 - (Future) ClaudeProvider: Anthropic Claude API
 """
 
-from trace.llm.base import LLMProvider, LLMProviderProtocol, LLMResponse, LLMError
-from trace.llm.ollama import OllamaProvider
+from kaizen.llm.base import LLMProvider, LLMProviderProtocol, LLMResponse, LLMError
+from kaizen.llm.ollama import OllamaProvider
 
 __all__ = [
     "LLMProvider",

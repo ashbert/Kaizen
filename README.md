@@ -1,4 +1,4 @@
-# Trace
+# Kaizen
 
 **Agentic Session Substrate** — A minimal, deterministic substrate for agent workflows.
 
@@ -6,7 +6,7 @@
 
 > A session is an **append-only trajectory + versioned state + artifacts**.
 
-Trace provides the foundational infrastructure for building auditable, reproducible, and resumable agent workflows. Every action is recorded, every state change is versioned, and sessions can be saved to disk and resumed later.
+Kaizen provides the foundational infrastructure for building auditable, reproducible, and resumable agent workflows. Every action is recorded, every state change is versioned, and sessions can be saved to disk and resumed later.
 
 ## Key Properties
 
@@ -22,7 +22,7 @@ Trace provides the foundational infrastructure for building auditable, reproduci
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd trace
+cd kaizen
 
 # Create virtual environment (Python 3.11+)
 python3.11 -m venv .venv
@@ -48,8 +48,8 @@ ollama serve
 ## Quick Start
 
 ```python
-from trace import Session, Dispatcher
-from trace.agents import ReverseAgent, UppercaseAgent
+from kaizen import Session, Dispatcher
+from kaizen.agents import ReverseAgent, UppercaseAgent
 
 # Create a session
 session = Session()
@@ -67,10 +67,10 @@ dispatcher.dispatch_single("uppercase", session, {"key": "text"})
 print(session.get("text"))  # "DLROW OLLEH"
 
 # Save for later
-session.save("my_session.trace")
+session.save("my_session.kaizen")
 
 # Resume anytime
-restored = Session.load("my_session.trace")
+restored = Session.load("my_session.kaizen")
 print(restored.get("text"))  # "DLROW OLLEH"
 ```
 
@@ -101,8 +101,8 @@ session.write_artifact("output.txt", b"result data")
 data = session.read_artifact("output.txt")
 
 # Persistence
-session.save("session.trace")
-restored = Session.load("session.trace")
+session.save("session.kaizen")
+restored = Session.load("session.kaizen")
 ```
 
 ### Agent
@@ -110,8 +110,8 @@ restored = Session.load("session.trace")
 **Agents** are callable units with declared capabilities:
 
 ```python
-from trace import Agent, AgentInfo, InvokeResult
-from trace.types import EntryType
+from kaizen import Agent, AgentInfo, InvokeResult
+from kaizen.types import EntryType
 
 class MyAgent(Agent):
     def info(self) -> AgentInfo:
@@ -155,8 +155,8 @@ class MyAgent(Agent):
 The **Dispatcher** routes capability calls to agents:
 
 ```python
-from trace import Dispatcher
-from trace.types import CapabilityCall
+from kaizen import Dispatcher
+from kaizen.types import CapabilityCall
 
 dispatcher = Dispatcher()
 dispatcher.register(ReverseAgent())
@@ -180,8 +180,8 @@ else:
 The **Planner** uses an LLM to convert natural language to capability calls:
 
 ```python
-from trace import Planner
-from trace.llm import OllamaProvider
+from kaizen import Planner
+from kaizen.llm import OllamaProvider
 
 # Create planner with LLM
 llm = OllamaProvider(model="llama3.1:8b")
@@ -198,9 +198,9 @@ if plan.success:
 ## Complete Workflow Example
 
 ```python
-from trace import Session, Dispatcher, Planner
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.llm import OllamaProvider
+from kaizen import Session, Dispatcher, Planner
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.llm import OllamaProvider
 
 # 1. Create session with initial state
 session = Session()
@@ -222,10 +222,10 @@ if plan.success:
     print(f"Result: {session.get('text')}")  # "DLROW OLLEH"
 
 # 5. Save session
-session.save("workflow.trace")
+session.save("workflow.kaizen")
 
 # 6. Later: Resume and inspect
-restored = Session.load("workflow.trace")
+restored = Session.load("workflow.kaizen")
 for entry in restored.get_trajectory():
     print(f"[{entry.seq_num}] {entry.agent_id}: {entry.entry_type.value}")
 ```
@@ -280,10 +280,10 @@ Sessions are stored in SQLite for portability:
 
 ```python
 # Save
-session.save("my_session.trace")
+session.save("my_session.kaizen")
 
 # Load
-restored = Session.load("my_session.trace")
+restored = Session.load("my_session.kaizen")
 
 # All data is preserved:
 assert restored.session_id == session.session_id
@@ -324,7 +324,7 @@ session = Session(max_artifact_size=10 * 1024 * 1024)  # 10MB
 ### LLM Configuration
 
 ```python
-from trace.llm import OllamaProvider
+from kaizen.llm import OllamaProvider
 
 # Default (localhost, llama3.1:8b)
 llm = OllamaProvider()
@@ -343,8 +343,8 @@ llm = OllamaProvider(
 ## Project Structure
 
 ```
-trace/
-├── src/trace/
+kaizen/
+├── src/kaizen/
 │   ├── __init__.py       # Package exports
 │   ├── types.py          # Core types (TrajectoryEntry, InvokeResult, etc.)
 │   ├── session.py        # Session class
@@ -369,7 +369,7 @@ trace/
 pytest
 
 # Run with coverage
-pytest --cov=trace
+pytest --cov=kaizen
 
 # Run specific test file
 pytest tests/test_session_state.py

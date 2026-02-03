@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from trace.session import Session
-from trace.types import EntryType
+from kaizen.session import Session
+from kaizen.types import EntryType
 
 
 class TestSaveBasics:

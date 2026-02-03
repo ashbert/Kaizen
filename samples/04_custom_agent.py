@@ -19,8 +19,8 @@ from typing import Any
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from trace import Session, Dispatcher, Agent, AgentInfo, InvokeResult
-from trace.types import EntryType
+from kaizen import Session, Dispatcher, Agent, AgentInfo, InvokeResult
+from kaizen.types import EntryType
 
 
 # =============================================================================
@@ -251,7 +251,7 @@ def main():
     print("-" * 40)
 
     long_text = (
-        "Trace is a minimal deterministic substrate for agent workflows. "
+        "Kaizen is a minimal deterministic substrate for agent workflows. "
         "It provides session management with state trajectory and artifacts. "
         "Sessions can be saved to disk and resumed later. "
         "All actions are recorded for auditability."

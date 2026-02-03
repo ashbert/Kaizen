@@ -1,5 +1,5 @@
 """
-Test suite for Trace.
+Test suite for Kaizen.
 
 This package contains all tests for the Trace session substrate.
 Tests are organized by module:

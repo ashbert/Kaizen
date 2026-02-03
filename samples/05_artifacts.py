@@ -18,7 +18,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from trace import Session
+from kaizen import Session
 
 
 def main():
@@ -108,7 +108,7 @@ def main():
     print("\n6. Artifacts Survive Save/Load")
     print("-" * 40)
 
-    with tempfile.NamedTemporaryFile(suffix=".trace", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".kaizen", delete=False) as f:
         session_path = f.name
 
     session.save(session_path)

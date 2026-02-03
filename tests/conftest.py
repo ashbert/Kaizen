@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for Trace tests.
+Pytest configuration and shared fixtures for Kaizen tests.
 
 This module provides common test fixtures and configuration that can be
 used across all test modules. Fixtures defined here are automatically
@@ -32,7 +32,7 @@ def temp_session_path() -> Generator[Path, None, None]:
     whether it passes or fails.
 
     Yields:
-        Path: A path to a temporary .trace file that can be used for
+        Path: A path to a temporary .kaizen file that can be used for
               save/load operations.
 
     Example:
@@ -44,8 +44,8 @@ def temp_session_path() -> Generator[Path, None, None]:
     # Create a temporary directory that will be cleaned up automatically
     with tempfile.TemporaryDirectory() as tmpdir:
         # Yield a path within the temp directory
-        # The .trace extension is conventional for trace session files
-        yield Path(tmpdir) / "test_session.trace"
+        # The .kaizen extension is conventional for kaizen session files
+        yield Path(tmpdir) / "test_session.kaizen"
 
 
 @pytest.fixture

@@ -22,9 +22,9 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from trace import Session, Dispatcher, Planner
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.llm import OllamaProvider
+from kaizen import Session, Dispatcher, Planner
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.llm import OllamaProvider
 
 
 def main():
@@ -115,7 +115,7 @@ def main():
     print("\n6. Saving Session")
     print("-" * 40)
 
-    with tempfile.NamedTemporaryFile(suffix=".trace", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".kaizen", delete=False) as f:
         session_path = f.name
 
     session.save(session_path)

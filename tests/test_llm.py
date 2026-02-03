@@ -13,7 +13,7 @@ with @pytest.mark.integration and skipped by default.
 
 import pytest
 
-from trace.llm import (
+from kaizen.llm import (
     LLMProvider,
     LLMProviderProtocol,
     LLMResponse,

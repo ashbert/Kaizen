@@ -1,7 +1,7 @@
 """
-Core data types for Trace.
+Core data types for Kaizen.
 
-This module defines the fundamental data structures used throughout the Trace
+This module defines the fundamental data structures used throughout the Kaizen
 session substrate. These types are designed to be:
 
 1. Immutable where appropriate (trajectory entries should never change)
@@ -64,7 +64,7 @@ class EntryType(str, Enum):
 
 class ErrorCode(str, Enum):
     """
-    Standard error codes for Trace operations.
+    Standard error codes for Kaizen operations.
 
     Using an enum ensures consistent error codes across the codebase
     and makes it easy to handle specific error conditions programmatically.

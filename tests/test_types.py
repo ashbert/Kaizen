@@ -1,5 +1,5 @@
 """
-Tests for core data types in Trace.
+Tests for core data types in Kaizen.
 
 This module tests the fundamental data structures:
 - TrajectoryEntry: Immutable trajectory records
@@ -19,7 +19,7 @@ Tests verify:
 from datetime import datetime, timezone, timedelta
 import pytest
 
-from trace.types import (
+from kaizen.types import (
     TrajectoryEntry,
     InvokeResult,
     CapabilityCall,

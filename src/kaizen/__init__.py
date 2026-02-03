@@ -1,5 +1,5 @@
 """
-Trace: Agentic Session Substrate
+Kaizen: Agentic Session Substrate
 
 A minimal, deterministic substrate for agent workflows built around a single core idea:
 A session is an append-only trajectory + versioned state + artifacts.
@@ -11,9 +11,9 @@ This module provides the core building blocks for:
 - Planner for LLM-based workflow planning
 
 Example usage:
-    from trace import Session, Dispatcher, Planner
-    from trace.agents import ReverseAgent, UppercaseAgent
-    from trace.llm import OllamaProvider
+    from kaizen import Session, Dispatcher, Planner
+    from kaizen.agents import ReverseAgent, UppercaseAgent
+    from kaizen.llm import OllamaProvider
 
     # Create a new session
     session = Session()
@@ -33,10 +33,10 @@ Example usage:
     result = dispatcher.dispatch_sequence(plan.calls, session)
 
     # Save session for later
-    session.save("my_session.trace")
+    session.save("my_session.kaizen")
 
     # Resume later
-    restored = Session.load("my_session.trace")
+    restored = Session.load("my_session.kaizen")
 
 For more information, see the project documentation.
 """
@@ -44,7 +44,7 @@ For more information, see the project documentation.
 __version__ = "0.1.0"
 
 # Core types
-from trace.types import (
+from kaizen.types import (
     TrajectoryEntry,
     InvokeResult,
     CapabilityCall,
@@ -54,16 +54,16 @@ from trace.types import (
 )
 
 # Session
-from trace.session import Session
+from kaizen.session import Session
 
 # Agent protocol
-from trace.agent import Agent, AgentProtocol
+from kaizen.agent import Agent, AgentProtocol
 
 # Dispatcher
-from trace.dispatcher import Dispatcher, DispatchResult
+from kaizen.dispatcher import Dispatcher, DispatchResult
 
 # Planner
-from trace.planner import Planner, PlanResult
+from kaizen.planner import Planner, PlanResult
 
 __all__ = [
     # Version

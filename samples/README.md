@@ -1,18 +1,18 @@
-# Trace Samples
+# Kaizen Samples
 
-This directory contains example scripts demonstrating how to use Trace.
+This directory contains example scripts demonstrating how to use Kaizen.
 
 ## Prerequisites
 
 ```bash
 # From the project root directory
-cd trace
+cd kaizen
 
 # Create and activate virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# Install trace in development mode
+# Install kaizen in development mode
 pip install -e ".[dev]"
 ```
 
@@ -63,7 +63,7 @@ Demonstrates agents and the dispatcher:
 ### 03_complete_workflow.py
 **Requires Ollama**
 
-Demonstrates the full Trace workflow:
+Demonstrates the full Kaizen workflow:
 1. Create a session with initial state
 2. Set up agents and dispatcher
 3. Use LLM planner to convert natural language to capability calls
@@ -96,20 +96,20 @@ Demonstrates artifact management:
 ### Session
 
 ```python
-from trace import Session
+from kaizen import Session
 
 session = Session()
 session.set("key", "value")
 value = session.get("key")
-session.save("session.trace")
-restored = Session.load("session.trace")
+session.save("session.kaizen")
+restored = Session.load("session.kaizen")
 ```
 
 ### Dispatcher
 
 ```python
-from trace import Dispatcher
-from trace.agents import ReverseAgent
+from kaizen import Dispatcher
+from kaizen.agents import ReverseAgent
 
 dispatcher = Dispatcher()
 dispatcher.register(ReverseAgent())
@@ -119,8 +119,8 @@ result = dispatcher.dispatch_single("reverse", session, {"key": "text"})
 ### Planner (requires Ollama)
 
 ```python
-from trace import Planner
-from trace.llm import OllamaProvider
+from kaizen import Planner
+from kaizen.llm import OllamaProvider
 
 llm = OllamaProvider()
 planner = Planner(llm, capabilities=["reverse", "uppercase"])
@@ -130,7 +130,7 @@ plan = planner.plan("reverse and uppercase the text", session)
 ### Custom Agent
 
 ```python
-from trace import Agent, AgentInfo, InvokeResult
+from kaizen import Agent, AgentInfo, InvokeResult
 
 class MyAgent(Agent):
     def info(self) -> AgentInfo:

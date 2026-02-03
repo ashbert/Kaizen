@@ -13,7 +13,7 @@ images, or any other binary data that agents need to work with.
 
 import pytest
 
-from trace.session import Session, DEFAULT_MAX_ARTIFACT_SIZE
+from kaizen.session import Session, DEFAULT_MAX_ARTIFACT_SIZE
 
 
 class TestArtifactWriteRead:

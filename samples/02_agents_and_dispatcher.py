@@ -17,9 +17,9 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from trace import Session, Dispatcher
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.types import CapabilityCall
+from kaizen import Session, Dispatcher
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.types import CapabilityCall
 
 
 def main():
@@ -70,7 +70,7 @@ def main():
     print("-" * 40)
 
     # Reset text
-    session.set("text", "trace is awesome")
+    session.set("text", "kaizen is awesome")
     print(f"Starting text: '{session.get('text')}'")
 
     # Execute multiple calls

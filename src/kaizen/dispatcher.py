@@ -1,5 +1,5 @@
 """
-Dispatcher for Trace.
+Dispatcher for Kaizen.
 
 The Dispatcher routes capability calls to registered agents and executes
 them sequentially. It is the orchestration layer that connects the Planner's
@@ -32,8 +32,8 @@ Example usage:
 
 from typing import Any
 
-from trace.agent import Agent, AgentProtocol
-from trace.types import (
+from kaizen.agent import Agent, AgentProtocol
+from kaizen.types import (
     AgentInfo,
     CapabilityCall,
     InvokeResult,
@@ -44,7 +44,7 @@ from trace.types import (
 # Import Session for type hints
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from trace.session import Session
+    from kaizen.session import Session
 
 
 # =============================================================================

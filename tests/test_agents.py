@@ -18,10 +18,10 @@ Tests verify:
 
 import pytest
 
-from trace.agent import Agent, AgentProtocol
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.session import Session
-from trace.types import AgentInfo, InvokeResult, EntryType, ErrorCode
+from kaizen.agent import Agent, AgentProtocol
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.session import Session
+from kaizen.types import AgentInfo, InvokeResult, EntryType, ErrorCode
 
 
 # =============================================================================

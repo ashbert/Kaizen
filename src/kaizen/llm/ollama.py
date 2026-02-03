@@ -1,5 +1,5 @@
 """
-Ollama LLM Provider for Trace.
+Ollama LLM Provider for Kaizen.
 
 This module provides an LLM provider that uses a local Ollama server
 for text generation. Ollama allows running open-source LLMs locally.
@@ -30,7 +30,7 @@ Example usage:
 
 import httpx
 
-from trace.llm.base import LLMProvider, LLMResponse, LLMError
+from kaizen.llm.base import LLMProvider, LLMResponse, LLMError
 
 
 # =============================================================================

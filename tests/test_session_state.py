@@ -16,7 +16,7 @@ of a session. These tests verify the core invariants:
 """
 
 import pytest
-from trace.session import Session
+from kaizen.session import Session
 
 
 class TestSessionCreation:

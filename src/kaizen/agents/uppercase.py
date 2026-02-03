@@ -1,41 +1,41 @@
 """
-Reverse Agent - A toy agent that reverses text.
+Uppercase Agent - A toy agent that converts text to uppercase.
 
 This agent demonstrates the Agent protocol by implementing a simple
-text reversal capability. It serves as a reference implementation
+text transformation capability. It serves as a reference implementation
 and is used in tests and examples.
 
-Capability: "reverse"
-    Reverses a string value in session state.
+Capability: "uppercase"
+    Converts a string value in session state to uppercase.
 
     Parameters:
-        key (str): The state key containing the text to reverse.
-                   The reversed text is written back to the same key.
+        key (str): The state key containing the text to uppercase.
+                   The uppercased text is written back to the same key.
 
     Result:
-        original (str): The original text before reversal.
-        reversed (str): The text after reversal.
+        original (str): The original text before transformation.
+        uppercased (str): The text after transformation.
 
 Example:
     session.set("text", "hello")
-    agent.invoke("reverse", session, {"key": "text"})
-    # session.get("text") == "olleh"
+    agent.invoke("uppercase", session, {"key": "text"})
+    # session.get("text") == "HELLO"
 """
 
 from typing import Any
 
-from trace.agent import Agent
-from trace.types import AgentInfo, InvokeResult, EntryType
+from kaizen.agent import Agent
+from kaizen.types import AgentInfo, InvokeResult, EntryType
 
 # Import Session for type hints
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from trace.session import Session
+    from kaizen.session import Session
 
 
-class ReverseAgent(Agent):
+class UppercaseAgent(Agent):
     """
-    Agent that reverses text stored in session state.
+    Agent that converts text to uppercase in session state.
 
     This is a simple demonstration agent that shows how to:
     - Implement the Agent protocol
@@ -54,11 +54,11 @@ class ReverseAgent(Agent):
             AgentInfo with agent details and capabilities.
         """
         return AgentInfo(
-            agent_id="reverse_agent_v1",
-            name="Reverse Agent",
+            agent_id="uppercase_agent_v1",
+            name="Uppercase Agent",
             version="1.0.0",
-            capabilities=["reverse"],
-            description="Reverses text stored in session state",
+            capabilities=["uppercase"],
+            description="Converts text to uppercase in session state",
         )
 
     def invoke(
@@ -68,19 +68,19 @@ class ReverseAgent(Agent):
         params: dict[str, Any],
     ) -> InvokeResult:
         """
-        Execute the reverse capability.
+        Execute the uppercase capability.
 
         Args:
-            capability: Must be "reverse".
-            session: Session containing the text to reverse.
+            capability: Must be "uppercase".
+            session: Session containing the text to uppercase.
             params: Must contain "key" - the state key with text.
 
         Returns:
-            InvokeResult with original and reversed text on success,
+            InvokeResult with original and uppercased text on success,
             or error details on failure.
         """
         # Validate capability
-        if capability != "reverse":
+        if capability != "uppercase":
             return self._unknown_capability(capability)
 
         # Validate params
@@ -118,14 +118,12 @@ class ReverseAgent(Agent):
             )
 
         # -----------------------------------------------------------------
-        # Execute the capability: reverse the string
+        # Execute the capability: uppercase the string
         # -----------------------------------------------------------------
         original = value
-        reversed_text = value[::-1]
+        uppercased = value.upper()
 
         # Record the action in trajectory BEFORE modifying state
-        # This ensures the trajectory reflects the intent even if
-        # the state modification fails
         agent_info = self.info()
         session.append(
             agent_id=agent_info.agent_id,
@@ -137,8 +135,8 @@ class ReverseAgent(Agent):
             },
         )
 
-        # Update session state with reversed text
-        session.set(key, reversed_text)
+        # Update session state with uppercased text
+        session.set(key, uppercased)
 
         # Record successful completion
         session.append(
@@ -147,7 +145,7 @@ class ReverseAgent(Agent):
             content={
                 "capability": capability,
                 "original": original,
-                "reversed": reversed_text,
+                "uppercased": uppercased,
             },
         )
 
@@ -155,7 +153,7 @@ class ReverseAgent(Agent):
         return InvokeResult.ok(
             result={
                 "original": original,
-                "reversed": reversed_text,
+                "uppercased": uppercased,
             },
             agent_id=agent_info.agent_id,
             capability=capability,

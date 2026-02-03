@@ -1,5 +1,5 @@
 """
-Planner for Trace.
+Planner for Kaizen.
 
 The Planner converts natural language user input into an ordered list of
 capability calls that can be executed by the Dispatcher. It uses an LLM
@@ -17,8 +17,8 @@ The Planner does NOT:
 - Learn from feedback (no reinforcement in V1)
 
 Example usage:
-    from trace.llm import OllamaProvider
-    from trace.planner import Planner
+    from kaizen.llm import OllamaProvider
+    from kaizen.planner import Planner
 
     provider = OllamaProvider()
     planner = Planner(provider)
@@ -35,13 +35,13 @@ import json
 import re
 from typing import Any
 
-from trace.llm.base import LLMProvider, LLMError
-from trace.types import CapabilityCall, ErrorCode, EntryType
+from kaizen.llm.base import LLMProvider, LLMError
+from kaizen.types import CapabilityCall, ErrorCode, EntryType
 
 # Import Session for type hints
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from trace.session import Session
+    from kaizen.session import Session
 
 
 # =============================================================================

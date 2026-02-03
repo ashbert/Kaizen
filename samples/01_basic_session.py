@@ -18,7 +18,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from trace import Session
+from kaizen import Session
 
 
 def main():
@@ -45,7 +45,7 @@ def main():
     # Set some values
     session.set("name", "Alice")
     session.set("count", 42)
-    session.set("tags", ["python", "trace", "agents"])
+    session.set("tags", ["python", "kaizen", "agents"])
     session.set("config", {"debug": True, "timeout": 30})
 
     print(f"name = {session.get('name')}")
@@ -89,7 +89,7 @@ def main():
     print("\n5. Saving and Loading")
     print("-" * 40)
 
-    with tempfile.NamedTemporaryFile(suffix=".trace", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".kaizen", delete=False) as f:
         session_path = f.name
 
     session.save(session_path)

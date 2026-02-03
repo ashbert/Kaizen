@@ -1,5 +1,5 @@
 """
-End-to-end integration tests for Trace.
+End-to-end integration tests for Kaizen.
 
 This module tests the complete workflow as specified in the V1 documentation:
     User: "Reverse this text and then uppercase it"
@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from trace.session import Session
-from trace.dispatcher import Dispatcher
-from trace.planner import Planner
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.llm.base import LLMProvider, LLMResponse
-from trace.types import CapabilityCall, EntryType
+from kaizen.session import Session
+from kaizen.dispatcher import Dispatcher
+from kaizen.planner import Planner
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.llm.base import LLMProvider, LLMResponse
+from kaizen.types import CapabilityCall, EntryType
 
 
 # =============================================================================
@@ -422,7 +422,7 @@ class TestRealLLMWorkflow:
         """
         Test complete workflow with real Ollama LLM.
         """
-        from trace.llm import OllamaProvider
+        from kaizen.llm import OllamaProvider
 
         llm = OllamaProvider()
         if not llm.is_available():

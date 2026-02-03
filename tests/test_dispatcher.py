@@ -15,10 +15,10 @@ Tests verify:
 
 import pytest
 
-from trace.dispatcher import Dispatcher, DispatchResult
-from trace.session import Session
-from trace.agents import ReverseAgent, UppercaseAgent
-from trace.types import CapabilityCall, InvokeResult, ErrorCode, EntryType
+from kaizen.dispatcher import Dispatcher, DispatchResult
+from kaizen.session import Session
+from kaizen.agents import ReverseAgent, UppercaseAgent
+from kaizen.types import CapabilityCall, InvokeResult, ErrorCode, EntryType
 
 
 # =============================================================================
@@ -484,8 +484,8 @@ class TestDispatcherEdgeCases:
 
     def test_agent_exception_is_caught(self) -> None:
         """Verify agent exceptions are caught and converted to failures."""
-        from trace.agent import Agent
-        from trace.types import AgentInfo
+        from kaizen.agent import Agent
+        from kaizen.types import AgentInfo
 
         class BrokenAgent(Agent):
             def info(self) -> AgentInfo:

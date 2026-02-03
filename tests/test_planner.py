@@ -10,10 +10,10 @@ Integration tests with real LLM are marked with @pytest.mark.integration.
 
 import pytest
 
-from trace.planner import Planner, PlanResult
-from trace.session import Session
-from trace.llm.base import LLMProvider, LLMResponse, LLMError
-from trace.types import CapabilityCall, ErrorCode, EntryType
+from kaizen.planner import Planner, PlanResult
+from kaizen.session import Session
+from kaizen.llm.base import LLMProvider, LLMResponse, LLMError
+from kaizen.types import CapabilityCall, ErrorCode, EntryType
 
 
 # =============================================================================
@@ -424,7 +424,7 @@ class TestPlannerIntegration:
 
     def test_plan_with_ollama(self) -> None:
         """Test planning with real Ollama (if available)."""
-        from trace.llm import OllamaProvider
+        from kaizen.llm import OllamaProvider
 
         provider = OllamaProvider()
         if not provider.is_available():

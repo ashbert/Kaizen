@@ -1,5 +1,5 @@
 """
-Infrastructure tests for Trace.
+Infrastructure tests for Kaizen.
 
 These tests verify that the test infrastructure itself is working correctly.
 They serve as a sanity check that pytest is configured properly and that
@@ -18,35 +18,35 @@ import pytest
 class TestProjectStructure:
     """Tests that verify the project structure is correct."""
 
-    def test_trace_package_importable(self) -> None:
+    def test_kaizen_package_importable(self) -> None:
         """
-        Verify that the trace package can be imported.
+        Verify that the kaizen package can be imported.
 
         This confirms that:
         1. The src directory is in the Python path (via pyproject.toml)
-        2. The trace package has a valid __init__.py
+        2. The kaizen package has a valid __init__.py
         3. Basic package metadata is accessible
         """
-        import trace
+        import kaizen
 
         # Verify version is defined
-        assert hasattr(trace, "__version__")
-        assert trace.__version__ == "0.1.0"
+        assert hasattr(kaizen, "__version__")
+        assert kaizen.__version__ == "0.1.0"
 
-    def test_trace_subpackages_importable(self) -> None:
+    def test_kaizen_subpackages_importable(self) -> None:
         """
-        Verify that trace subpackages can be imported.
+        Verify that kaizen subpackages can be imported.
 
         This ensures the package structure is valid and all
         __init__.py files are in place.
         """
         # These imports should not raise ImportError
-        import trace.llm
-        import trace.agents
+        import kaizen.llm
+        import kaizen.agents
 
         # Verify the modules are actually loaded
-        assert trace.llm is not None
-        assert trace.agents is not None
+        assert kaizen.llm is not None
+        assert kaizen.agents is not None
 
     def test_src_in_python_path(self) -> None:
         """
@@ -55,16 +55,16 @@ class TestProjectStructure:
         This is essential for the package to be importable during tests
         without installation.
         """
-        # Find paths that contain 'trace' as a package
-        trace_paths = [p for p in sys.path if "trace" in str(p).lower()]
+        # Find paths that contain 'kaizen' as a package
+        kaizen_paths = [p for p in sys.path if "kaizen" in str(p).lower()]
 
-        # At minimum, the test should be able to import trace
+        # At minimum, the test should be able to import kaizen
         # (which we verified above), but let's also check the path setup
-        import trace
-        trace_file = trace.__file__
+        import kaizen
+        kaizen_file = kaizen.__file__
 
-        assert trace_file is not None
-        assert "src/trace" in trace_file or "src\\trace" in trace_file
+        assert kaizen_file is not None
+        assert "src/kaizen" in kaizen_file or "src\\kaizen" in kaizen_file
 
 
 class TestFixtures:
@@ -76,12 +76,12 @@ class TestFixtures:
 
         The fixture should:
         1. Provide a Path object
-        2. Have the .trace extension
+        2. Have the .kaizen extension
         3. Be in a directory that exists
         4. Not exist yet (it's a path for the test to create)
         """
         assert isinstance(temp_session_path, Path)
-        assert temp_session_path.suffix == ".trace"
+        assert temp_session_path.suffix == ".kaizen"
         assert temp_session_path.parent.exists()
         assert not temp_session_path.exists()
 

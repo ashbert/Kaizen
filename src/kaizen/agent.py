@@ -1,5 +1,5 @@
 """
-Agent protocol for Trace.
+Agent protocol for Kaizen.
 
 This module defines the Agent abstract base class that all agents must
 implement. An agent is a callable unit with declared capabilities that
@@ -42,14 +42,14 @@ Example implementation:
 from abc import ABC, abstractmethod
 from typing import Any, Protocol, runtime_checkable
 
-from trace.types import AgentInfo, InvokeResult, ErrorCode
+from kaizen.types import AgentInfo, InvokeResult, ErrorCode
 
 
 # Using TYPE_CHECKING to avoid circular imports
 # Session is only needed for type hints
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from trace.session import Session
+    from kaizen.session import Session
 
 
 # =============================================================================
@@ -94,9 +94,9 @@ class AgentProtocol(Protocol):
 
 class Agent(ABC):
     """
-    Abstract base class for Trace agents.
+    Abstract base class for Kaizen agents.
 
-    Agents are the callable units in Trace that perform work. Each agent
+    Agents are the callable units in Kaizen that perform work. Each agent
     declares one or more capabilities and can be invoked to execute them.
 
     When implementing an agent:

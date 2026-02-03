@@ -1,7 +1,7 @@
 """
-Session implementation for Trace.
+Session implementation for Kaizen.
 
-The Session is the central data structure in Trace - it represents a single
+The Session is the central data structure in Kaizen - it represents a single
 unit of execution and persistence. A session contains:
 
 1. State: A versioned key-value store for any JSON-serializable data
@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from trace.types import TrajectoryEntry, EntryType, ErrorCode
+from kaizen.types import TrajectoryEntry, EntryType, ErrorCode
 
 
 # =============================================================================
@@ -53,7 +53,7 @@ SCHEMA_VERSION = 1
 
 class Session:
     """
-    A session is the unit of execution and persistence in Trace.
+    A session is the unit of execution and persistence in Kaizen.
 
     Sessions are portable and resumable - they can be saved to disk and
     restored later with full fidelity. All operations are recorded in
@@ -77,8 +77,8 @@ class Session:
         version = session.get_state_version()
 
         # Save and restore
-        session.save("my_session.trace")
-        restored = Session.load("my_session.trace")
+        session.save("my_session.kaizen")
+        restored = Session.load("my_session.kaizen")
     """
 
     def __init__(
