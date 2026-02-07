@@ -24,7 +24,7 @@ Requirements:
 
 import modal
 
-MODEL_ID = "Qwen/Qwen2.5-72B-Instruct"
+MODEL_ID = "Qwen/Qwen2.5-72B-Instruct-AWQ"
 GPU = "A100-80GB:1"
 
 app = modal.App("kaizen-vllm")
@@ -46,8 +46,9 @@ vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
         "/root/.cache/vllm": vllm_cache,
     },
     timeout=600,
-    container_idle_timeout=300,
+    scaledown_window=300,
 )
+@modal.concurrent(max_inputs=32)
 class Inference:
     """vLLM inference server as a Modal class."""
 
@@ -62,10 +63,10 @@ class Inference:
             trust_remote_code=True,
             max_model_len=8192,
             gpu_memory_utilization=0.90,
+            quantization="awq",
         )
 
     @modal.method()
-    @modal.concurrent(max_inputs=32)
     def generate(self, messages: list[dict], max_tokens: int = 4096) -> dict:
         """Generate a chat completion."""
         from vllm import SamplingParams

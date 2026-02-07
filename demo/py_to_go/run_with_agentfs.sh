@@ -31,7 +31,7 @@ agentfs init kaizen-demo --force
 echo "AgentFS filesystem initialized: kaizen-demo"
 
 export KAIZEN_MODEL_URL
-export KAIZEN_MODEL_NAME="${KAIZEN_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct}"
+export KAIZEN_MODEL_NAME="${KAIZEN_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct-AWQ}"
 export KAIZEN_API_KEY="${KAIZEN_API_KEY:-}"
 
 echo "Running demo with:"

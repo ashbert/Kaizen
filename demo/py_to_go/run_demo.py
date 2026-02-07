@@ -379,7 +379,7 @@ def main() -> int:
         if model_url:
             llm: LLMProvider = OpenAICompatProvider(
                 base_url=model_url,
-                model=os.environ.get("KAIZEN_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct"),
+                model=os.environ.get("KAIZEN_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ"),
                 api_key=os.environ.get("KAIZEN_API_KEY"),
             )
         else:
