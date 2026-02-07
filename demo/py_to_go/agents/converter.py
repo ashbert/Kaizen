@@ -29,7 +29,7 @@ from typing import Any
 
 from kaizen import Agent, AgentInfo, InvokeResult, Session
 from kaizen.types import EntryType
-from kaizen.llm import OllamaProvider
+from kaizen.llm import LLMProvider, OllamaProvider
 
 
 # System prompt for Python to Go conversion
@@ -82,7 +82,7 @@ class ConverterAgent(Agent):
     Each invocation handles one file from the conversion plan.
     """
 
-    def __init__(self, llm_provider: OllamaProvider | None = None) -> None:
+    def __init__(self, llm_provider: LLMProvider | None = None) -> None:
         """
         Initialize the converter agent.
 
