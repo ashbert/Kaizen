@@ -38,7 +38,7 @@ sys.path.insert(0, str(project_root / "src"))  # For kaizen package
 
 from kaizen import Session, Dispatcher
 from kaizen.types import EntryType
-from kaizen.llm import OllamaProvider
+from kaizen.llm import LLMProvider, OllamaProvider, OpenAICompatProvider
 
 # Import demo agents
 from demo.py_to_go.agents.planner import PlannerAgent
@@ -87,18 +87,22 @@ def check_prerequisites() -> bool:
         print("  ✗ Go is not available")
         return False
 
-    # Check Ollama
-    try:
-        llm = OllamaProvider()
-        if llm.is_available():
-            print("  ✓ Ollama is available")
-        else:
-            print("  ✗ Ollama is not running")
-            print("    Start it with: ollama serve")
+    # Check LLM provider
+    if os.environ.get("KAIZEN_MODEL_URL"):
+        print(f"  ✓ Using remote LLM: {os.environ['KAIZEN_MODEL_URL']}")
+    else:
+        try:
+            llm = OllamaProvider()
+            if llm.is_available():
+                print("  ✓ Ollama is available")
+            else:
+                print("  ✗ Ollama is not running")
+                print("    Start it with: ollama serve")
+                print("    Or set KAIZEN_MODEL_URL for a remote endpoint")
+                return False
+        except Exception as e:
+            print(f"  ✗ Ollama check failed: {e}")
             return False
-    except Exception as e:
-        print(f"  ✗ Ollama check failed: {e}")
-        return False
 
     return True
 
@@ -151,6 +155,8 @@ def setup_session(src_tmp: str, out_tmp: str) -> Session:
     """Create or load the Kaizen session."""
     print_step(3, "Setting up Kaizen session")
 
+    workspace = os.environ.get("KAIZEN_WORKSPACE")
+
     # Check for existing session
     if SESSION_FILE.exists():
         print(f"  Loading existing session: {SESSION_FILE}")
@@ -162,9 +168,19 @@ def setup_session(src_tmp: str, out_tmp: str) -> Session:
         session.set("go_output_path", out_tmp)
         return session
 
+    # If workspace is set, use subdirs inside it
+    if workspace:
+        src_dir = str(Path(workspace) / "src")
+        out_dir = str(Path(workspace) / "out")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(out_dir, exist_ok=True)
+        src_tmp = src_dir
+        out_tmp = out_dir
+        print(f"  Using workspace: {workspace}")
+
     # Create new session
     print("  Creating new session")
-    session = Session()
+    session = Session(workspace_path=workspace)
 
     # Seed initial state
     session.set("source_language", "python")
@@ -190,7 +206,7 @@ def setup_session(src_tmp: str, out_tmp: str) -> Session:
     return session
 
 
-def setup_dispatcher(llm: OllamaProvider) -> Dispatcher:
+def setup_dispatcher(llm: LLMProvider) -> Dispatcher:
     """Create and configure the dispatcher with all agents."""
     print_step(4, "Setting up dispatcher and agents")
 
@@ -359,7 +375,15 @@ def main() -> int:
         session = setup_session(src_tmp, out_tmp)
 
         # Set up LLM provider (shared across agents)
-        llm = OllamaProvider(model="llama3.1:8b", timeout=300.0)
+        model_url = os.environ.get("KAIZEN_MODEL_URL")
+        if model_url:
+            llm: LLMProvider = OpenAICompatProvider(
+                base_url=model_url,
+                model=os.environ.get("KAIZEN_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct"),
+                api_key=os.environ.get("KAIZEN_API_KEY"),
+            )
+        else:
+            llm = OllamaProvider(model="llama3.1:8b", timeout=300.0)
 
         # Set up dispatcher
         dispatcher = setup_dispatcher(llm)
