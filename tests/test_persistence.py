@@ -407,6 +407,38 @@ class TestResumability:
         assert reloaded.get("value") == 2
 
 
+class TestWorkspacePath:
+    """Tests for workspace_path persistence."""
+
+    def test_workspace_path_preserved(self, temp_session_path: Path) -> None:
+        """Verify workspace_path survives roundtrip."""
+        session = Session(workspace_path="/mnt/agentfs/workspace")
+        session.save(temp_session_path)
+
+        loaded = Session.load(temp_session_path)
+        assert loaded.workspace_path == "/mnt/agentfs/workspace"
+
+    def test_workspace_path_none_default(self, temp_session_path: Path) -> None:
+        """Verify workspace_path defaults to None and survives roundtrip."""
+        session = Session()
+        assert session.workspace_path is None
+        session.save(temp_session_path)
+
+        loaded = Session.load(temp_session_path)
+        assert loaded.workspace_path is None
+
+    def test_workspace_file_helper(self) -> None:
+        """Verify workspace_file joins paths correctly."""
+        session = Session(workspace_path="/mnt/workspace")
+        assert session.workspace_file("src", "main.go") == "/mnt/workspace/src/main.go"
+        assert session.workspace_file("out") == "/mnt/workspace/out"
+
+    def test_workspace_file_returns_none_without_workspace(self) -> None:
+        """Verify workspace_file returns None when no workspace is set."""
+        session = Session()
+        assert session.workspace_file("src", "main.go") is None
+
+
 class TestFullWorkflowRoundtrip:
     """Tests for complete workflow roundtrips."""
 

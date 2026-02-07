@@ -85,6 +85,7 @@ class Session:
         self,
         session_id: str | None = None,
         max_artifact_size: int = DEFAULT_MAX_ARTIFACT_SIZE,
+        workspace_path: str | None = None,
     ) -> None:
         """
         Initialize a new session.
@@ -92,6 +93,7 @@ class Session:
         Args:
             session_id: Optional session ID. If not provided, a UUID is generated.
             max_artifact_size: Maximum artifact size in bytes. Default is 100MB.
+            workspace_path: Optional filesystem workspace path (e.g., AgentFS mount).
         """
         # Generate a unique session ID if not provided
         # Using UUID4 for random unique identifiers
@@ -99,6 +101,7 @@ class Session:
 
         # Configuration
         self._max_artifact_size = max_artifact_size
+        self._workspace_path = workspace_path
 
         # -----------------------------------------------------------------
         # State Storage
@@ -141,6 +144,7 @@ class Session:
                 "session_id": self._session_id,
                 "max_artifact_size": self._max_artifact_size,
                 "schema_version": SCHEMA_VERSION,
+                "workspace_path": self._workspace_path,
             },
         )
 
@@ -167,6 +171,17 @@ class Session:
             int: Maximum artifact size.
         """
         return self._max_artifact_size
+
+    @property
+    def workspace_path(self) -> str | None:
+        """Optional filesystem workspace path (e.g., AgentFS mount point)."""
+        return self._workspace_path
+
+    def workspace_file(self, *path_parts: str) -> str | None:
+        """Join workspace_path with sub-path parts. Returns None if no workspace."""
+        if self._workspace_path is None:
+            return None
+        return str(Path(self._workspace_path).joinpath(*path_parts))
 
     # =========================================================================
     # STATE MANAGEMENT
@@ -619,12 +634,13 @@ class Session:
         conn = sqlite3.connect(path)
         try:
             # Load metadata first to get config
-            session_id, max_artifact_size, state_version = cls._load_metadata(conn)
+            session_id, max_artifact_size, state_version, workspace_path = cls._load_metadata(conn)
 
             # Create session instance (this will add a SESSION_CREATED entry)
             session = cls(
                 session_id=session_id,
                 max_artifact_size=max_artifact_size,
+                workspace_path=workspace_path,
             )
 
             # Clear the auto-created trajectory entry
@@ -698,6 +714,7 @@ class Session:
             "session_id": self._session_id,
             "max_artifact_size": str(self._max_artifact_size),
             "state_version": str(self._state_version),
+            "workspace_path": self._workspace_path or "",
         }
         conn.execute("DELETE FROM metadata")
         conn.executemany(
@@ -743,12 +760,12 @@ class Session:
     @classmethod
     def _load_metadata(
         cls, conn: sqlite3.Connection
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, int, int, str | None]:
         """
         Load session metadata.
 
         Returns:
-            Tuple of (session_id, max_artifact_size, state_version)
+            Tuple of (session_id, max_artifact_size, state_version, workspace_path)
         """
         cursor = conn.execute("SELECT key, value FROM metadata")
         metadata = dict(cursor.fetchall())
@@ -765,6 +782,7 @@ class Session:
             metadata["session_id"],
             int(metadata["max_artifact_size"]),
             int(metadata["state_version"]),
+            metadata.get("workspace_path", "") or None,
         )
 
     @classmethod
