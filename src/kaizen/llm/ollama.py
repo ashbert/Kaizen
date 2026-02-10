@@ -28,6 +28,8 @@ Example usage:
     )
 """
 
+from typing import Any
+
 import httpx
 
 from kaizen.llm.base import LLMProvider, LLMResponse, LLMError
@@ -119,6 +121,7 @@ class OllamaProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         """
         Generate a completion using Ollama.
@@ -128,6 +131,8 @@ class OllamaProvider(LLMProvider):
         Args:
             prompt: The prompt to complete.
             system: Optional system message.
+            **kwargs: Per-call overrides. Recognized: max_tokens (mapped to
+                      num_predict), temperature, top_p, top_k, seed, stop.
 
         Returns:
             LLMResponse: The generated response.
@@ -146,6 +151,17 @@ class OllamaProvider(LLMProvider):
         # Add system message if provided
         if system:
             payload["system"] = system
+
+        # Map per-call kwargs to Ollama "options" parameters
+        _OLLAMA_OPTIONS = {"temperature", "top_p", "top_k", "num_predict", "seed", "stop"}
+        options: dict[str, Any] = {}
+        if "max_tokens" in kwargs:
+            options["num_predict"] = kwargs["max_tokens"]
+        for key in _OLLAMA_OPTIONS:
+            if key in kwargs:
+                options[key] = kwargs[key]
+        if options:
+            payload["options"] = options
 
         # Make the request
         try:

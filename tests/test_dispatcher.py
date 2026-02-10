@@ -528,3 +528,243 @@ class TestDispatcherEdgeCases:
         # First change should be preserved
         assert session.get("text") == "olleh"
         assert session.get("counter") == 0
+
+
+# =============================================================================
+# COMPLETED INDICES TESTS
+# =============================================================================
+
+
+class TestDispatchResultCompletedIndices:
+    """Tests for DispatchResult.completed_indices property."""
+
+    def test_all_successful(self) -> None:
+        """Verify completed_indices returns all indices when all succeed."""
+        results = [
+            InvokeResult.ok(result="a", agent_id="a", capability="c1"),
+            InvokeResult.ok(result="b", agent_id="b", capability="c2"),
+        ]
+        dr = DispatchResult(results)
+        assert dr.completed_indices == [0, 1]
+
+    def test_partial_failure(self) -> None:
+        """Verify completed_indices excludes failed steps."""
+        results = [
+            InvokeResult.ok(result="a", agent_id="a", capability="c1"),
+            InvokeResult.fail(ErrorCode.AGENT_INVOCATION_FAILED, "err", "b", "c2"),
+        ]
+        dr = DispatchResult(results)
+        assert dr.completed_indices == [0]
+
+    def test_empty(self) -> None:
+        """Verify completed_indices is empty for empty results."""
+        dr = DispatchResult([])
+        assert dr.completed_indices == []
+
+
+# =============================================================================
+# PLAN_STEP_COMPLETED RECORDING TESTS
+# =============================================================================
+
+
+class TestPlanStepCompletedRecording:
+    """Tests for PLAN_STEP_COMPLETED trajectory entries."""
+
+    def test_records_plan_step_completed_on_success(self) -> None:
+        """Verify PLAN_STEP_COMPLETED is recorded for successful steps."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+
+        calls = [CapabilityCall("reverse", {"key": "text"})]
+        dispatcher.dispatch_sequence(calls, session)
+
+        trajectory = session.get_trajectory()
+        completed_entries = [
+            e for e in trajectory
+            if e.entry_type == EntryType.PLAN_STEP_COMPLETED
+        ]
+        assert len(completed_entries) == 1
+        assert completed_entries[0].content["step_index"] == 0
+        assert completed_entries[0].content["capability"] == "reverse"
+        assert completed_entries[0].content["success"] is True
+
+    def test_records_plan_step_completed_on_failure(self) -> None:
+        """Verify PLAN_STEP_COMPLETED is recorded for failed steps."""
+        session = Session()
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+
+        # No value set for "text" — agent will fail
+        calls = [CapabilityCall("reverse", {"key": "text"})]
+        dispatcher.dispatch_sequence(calls, session)
+
+        trajectory = session.get_trajectory()
+        completed_entries = [
+            e for e in trajectory
+            if e.entry_type == EntryType.PLAN_STEP_COMPLETED
+        ]
+        assert len(completed_entries) == 1
+        assert completed_entries[0].content["success"] is False
+
+    def test_records_plan_step_completed_for_unknown_capability(self) -> None:
+        """Verify PLAN_STEP_COMPLETED recorded when no agent found."""
+        session = Session()
+        dispatcher = Dispatcher()
+
+        calls = [CapabilityCall("unknown", {})]
+        dispatcher.dispatch_sequence(calls, session)
+
+        trajectory = session.get_trajectory()
+        completed_entries = [
+            e for e in trajectory
+            if e.entry_type == EntryType.PLAN_STEP_COMPLETED
+        ]
+        assert len(completed_entries) == 1
+        assert completed_entries[0].content["success"] is False
+        assert completed_entries[0].content["capability"] == "unknown"
+
+    def test_records_completed_for_each_step(self) -> None:
+        """Verify each step gets its own PLAN_STEP_COMPLETED entry."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+        dispatcher.register(UppercaseAgent())
+
+        calls = [
+            CapabilityCall("reverse", {"key": "text"}),
+            CapabilityCall("uppercase", {"key": "text"}),
+        ]
+        dispatcher.dispatch_sequence(calls, session)
+
+        trajectory = session.get_trajectory()
+        completed_entries = [
+            e for e in trajectory
+            if e.entry_type == EntryType.PLAN_STEP_COMPLETED
+        ]
+        assert len(completed_entries) == 2
+        assert completed_entries[0].content["step_index"] == 0
+        assert completed_entries[1].content["step_index"] == 1
+
+
+# =============================================================================
+# RESUME SEQUENCE TESTS
+# =============================================================================
+
+
+class TestResumeSequence:
+    """Tests for Dispatcher.resume_sequence()."""
+
+    def test_resume_skips_completed_steps(self) -> None:
+        """Verify resume_sequence skips already-completed steps."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+        dispatcher.register(UppercaseAgent())
+
+        # First run: execute only step 0
+        first_calls = [CapabilityCall("reverse", {"key": "text"})]
+        dispatcher.dispatch_sequence(first_calls, session)
+
+        # text is now "olleh", and trajectory has PLAN_STEP_COMPLETED for
+        # (step_index=0, capability="reverse")
+
+        # Resume the full 2-step sequence: should skip step 0, execute step 1
+        full_calls = [
+            CapabilityCall("reverse", {"key": "text"}),
+            CapabilityCall("uppercase", {"key": "text"}),
+        ]
+        result = dispatcher.resume_sequence(full_calls, session)
+
+        assert result.success is True
+        assert result.executed_count == 2
+        # Step 0 should be synthetic (resumed)
+        assert result.results[0].result.get("resumed") is True
+        # Step 1 should have executed — text goes from "olleh" -> "OLLEH"
+        assert session.get("text") == "OLLEH"
+
+    def test_resume_all_completed(self) -> None:
+        """Verify resume_sequence returns immediately if all steps done."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+        dispatcher.register(UppercaseAgent())
+
+        calls = [
+            CapabilityCall("reverse", {"key": "text"}),
+            CapabilityCall("uppercase", {"key": "text"}),
+        ]
+        # Full run
+        dispatcher.dispatch_sequence(calls, session)
+        assert session.get("text") == "OLLEH"
+
+        # Resume should skip everything
+        result = dispatcher.resume_sequence(calls, session)
+
+        assert result.success is True
+        assert result.executed_count == 2
+        assert result.results[0].result.get("resumed") is True
+        assert result.results[1].result.get("resumed") is True
+
+    def test_resume_none_completed(self) -> None:
+        """Verify resume_sequence executes all if none completed."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+
+        calls = [CapabilityCall("reverse", {"key": "text"})]
+        result = dispatcher.resume_sequence(calls, session)
+
+        assert result.success is True
+        assert session.get("text") == "olleh"
+        # Should not be a resumed result
+        assert result.results[0].result.get("resumed") is not True
+
+    def test_resume_mismatched_capability_reexecutes(self) -> None:
+        """Verify changed capability at same index gets re-executed."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+        dispatcher.register(UppercaseAgent())
+
+        # First run: reverse at index 0
+        first_calls = [CapabilityCall("reverse", {"key": "text"})]
+        dispatcher.dispatch_sequence(first_calls, session)
+        # text = "olleh"
+
+        # Resume with DIFFERENT capability at index 0
+        session.set("text", "hello")
+        new_calls = [CapabilityCall("uppercase", {"key": "text"})]
+        result = dispatcher.resume_sequence(new_calls, session)
+
+        assert result.success is True
+        # Should have executed uppercase (not skipped)
+        assert session.get("text") == "HELLO"
+        assert result.results[0].result.get("resumed") is not True
+
+    def test_resume_accepts_dict_calls(self) -> None:
+        """Verify resume_sequence accepts dict format calls."""
+        session = Session()
+        session.set("text", "hello")
+
+        dispatcher = Dispatcher()
+        dispatcher.register(ReverseAgent())
+
+        calls = [{"capability": "reverse", "params": {"key": "text"}}]
+        result = dispatcher.resume_sequence(calls, session)
+
+        assert result.success is True
+        assert session.get("text") == "olleh"

@@ -17,7 +17,7 @@ Key design decisions:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 # =============================================================================
@@ -73,6 +73,7 @@ class LLMProviderProtocol(Protocol):
         self,
         prompt: str,
         system: str | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         """Generate a completion for the given prompt."""
         ...
@@ -116,6 +117,7 @@ class LLMProvider(ABC):
         self,
         prompt: str,
         system: str | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         """
         Generate a completion for the given prompt.
@@ -123,6 +125,9 @@ class LLMProvider(ABC):
         Args:
             prompt: The user prompt/message to complete.
             system: Optional system message to guide the model's behavior.
+            **kwargs: Optional per-call overrides. Recognized keys vary by
+                      provider but commonly include: max_tokens, temperature,
+                      top_p. Unrecognized keys are silently ignored.
 
         Returns:
             LLMResponse: The generated response.

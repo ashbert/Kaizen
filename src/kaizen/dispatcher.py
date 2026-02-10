@@ -109,6 +109,11 @@ class DispatchResult:
         """Number of calls that were executed."""
         return len(self._results)
 
+    @property
+    def completed_indices(self) -> list[int]:
+        """Indices of calls that completed successfully."""
+        return [i for i, r in enumerate(self._results) if r.success]
+
     def __repr__(self) -> str:
         """String representation for debugging."""
         if self.success:
@@ -352,6 +357,18 @@ class Dispatcher:
                 )
                 results.append(error_result)
 
+                # Record step completion (failed)
+                session.append(
+                    agent_id="dispatcher",
+                    entry_type=EntryType.PLAN_STEP_COMPLETED,
+                    content={
+                        "step_index": i,
+                        "capability": call.capability,
+                        "success": False,
+                        "result_summary": str(error_result.error)[:200],
+                    },
+                )
+
                 # Fail fast - stop execution
                 return DispatchResult(results)
 
@@ -373,6 +390,18 @@ class Dispatcher:
                 )
 
             results.append(result)
+
+            # Record step completion
+            session.append(
+                agent_id="dispatcher",
+                entry_type=EntryType.PLAN_STEP_COMPLETED,
+                content={
+                    "step_index": i,
+                    "capability": call.capability,
+                    "success": result.success,
+                    "result_summary": str(result.result)[:200] if result.success else str(result.error)[:200],
+                },
+            )
 
             # If this call failed, stop execution (fail-fast)
             if not result.success:
@@ -407,6 +436,140 @@ class Dispatcher:
         call = CapabilityCall(capability, params or {})
         dispatch_result = self.dispatch_sequence([call], session)
         return dispatch_result.results[0]
+
+    # =========================================================================
+    # RESUME
+    # =========================================================================
+
+    def resume_sequence(
+        self,
+        calls: list[CapabilityCall] | list[dict[str, Any]],
+        session: "Session",
+    ) -> DispatchResult:
+        """
+        Resume a previously interrupted sequence of capability calls.
+
+        Scans the session trajectory for PLAN_STEP_COMPLETED entries with
+        success=True, determines which steps already succeeded, and skips
+        them. Resumes execution from the first incomplete step.
+
+        Matching is done by (step_index, capability) pairs to handle cases
+        where the calls list may have been reordered or modified since the
+        last run. A step is considered completed only if both its index AND
+        capability name match a successful PLAN_STEP_COMPLETED entry.
+
+        Args:
+            calls: List of CapabilityCall objects or dicts with
+                   'capability' and 'params' keys.
+            session: The session to operate on.
+
+        Returns:
+            DispatchResult: Contains results for all steps (both previously
+            completed and newly executed). Previously completed steps are
+            represented as synthetic InvokeResult.ok entries.
+        """
+        # Normalize all calls to CapabilityCall
+        normalized: list[CapabilityCall] = []
+        for call in calls:
+            if isinstance(call, dict):
+                normalized.append(CapabilityCall.from_dict(call))
+            else:
+                normalized.append(call)
+
+        # Scan trajectory for successful PLAN_STEP_COMPLETED entries
+        completed: set[tuple[int, str]] = set()
+        for entry in session.get_trajectory():
+            if entry.entry_type == EntryType.PLAN_STEP_COMPLETED:
+                content = entry.content
+                if content.get("success"):
+                    completed.add((content["step_index"], content["capability"]))
+
+        # Execute steps, skipping already-completed ones
+        results: list[InvokeResult] = []
+
+        for i, call in enumerate(normalized):
+            if (i, call.capability) in completed:
+                # This step already succeeded — create a synthetic result
+                results.append(InvokeResult.ok(
+                    result={"resumed": True, "step_index": i},
+                    agent_id="dispatcher",
+                    capability=call.capability,
+                ))
+                continue
+
+            # Record that we're starting this step
+            session.append(
+                agent_id="dispatcher",
+                entry_type=EntryType.PLAN_STEP_STARTED,
+                content={
+                    "step_index": i,
+                    "capability": call.capability,
+                    "params": call.params,
+                },
+            )
+
+            # Look up the agent for this capability
+            agent = self._capability_to_agent.get(call.capability)
+
+            if agent is None:
+                error_result = InvokeResult.fail(
+                    error_code=ErrorCode.DISPATCH_NO_AGENT_FOR_CAPABILITY,
+                    message=f"No agent registered for capability '{call.capability}'",
+                    agent_id="dispatcher",
+                    capability=call.capability,
+                    details={
+                        "available_capabilities": self.get_capabilities(),
+                        "step_index": i,
+                    },
+                )
+                results.append(error_result)
+
+                session.append(
+                    agent_id="dispatcher",
+                    entry_type=EntryType.PLAN_STEP_COMPLETED,
+                    content={
+                        "step_index": i,
+                        "capability": call.capability,
+                        "success": False,
+                        "result_summary": str(error_result.error)[:200],
+                    },
+                )
+                return DispatchResult(results)
+
+            # Execute the capability
+            try:
+                result = agent.invoke(call.capability, session, call.params)
+            except Exception as e:
+                result = InvokeResult.fail(
+                    error_code=ErrorCode.AGENT_INVOCATION_FAILED,
+                    message=f"Agent raised exception: {type(e).__name__}: {e}",
+                    agent_id=agent.info().agent_id,
+                    capability=call.capability,
+                    details={
+                        "exception_type": type(e).__name__,
+                        "exception_message": str(e),
+                        "step_index": i,
+                    },
+                )
+
+            results.append(result)
+
+            # Record step completion
+            session.append(
+                agent_id="dispatcher",
+                entry_type=EntryType.PLAN_STEP_COMPLETED,
+                content={
+                    "step_index": i,
+                    "capability": call.capability,
+                    "success": result.success,
+                    "result_summary": str(result.result)[:200] if result.success else str(result.error)[:200],
+                },
+            )
+
+            if not result.success:
+                return DispatchResult(results)
+
+        return DispatchResult(results)
 
     # =========================================================================
     # DEBUGGING

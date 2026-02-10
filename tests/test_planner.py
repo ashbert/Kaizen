@@ -47,7 +47,7 @@ class MockLLMProvider(LLMProvider):
         """Set the response to return."""
         self._response = response
 
-    def complete(self, prompt: str, system: str | None = None) -> LLMResponse:
+    def complete(self, prompt: str, system: str | None = None, **kwargs) -> LLMResponse:
         """Return the configured response."""
         self.last_prompt = prompt
         self.last_system = system
@@ -63,7 +63,7 @@ class MockLLMProvider(LLMProvider):
 class FailingLLMProvider(LLMProvider):
     """Mock provider that always fails."""
 
-    def complete(self, prompt: str, system: str | None = None) -> LLMResponse:
+    def complete(self, prompt: str, system: str | None = None, **kwargs) -> LLMResponse:
         raise LLMError("Mock failure", "mock")
 
     @property

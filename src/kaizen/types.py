@@ -56,6 +56,7 @@ class EntryType(str, Enum):
     # Planning entries
     PLAN_CREATED = "plan_created"           # Planner generated a plan
     PLAN_STEP_STARTED = "plan_step_started" # A plan step began execution
+    PLAN_STEP_COMPLETED = "plan_step_completed" # A plan step finished execution
 
     # User/system entries
     USER_INPUT = "user_input"               # User provided input

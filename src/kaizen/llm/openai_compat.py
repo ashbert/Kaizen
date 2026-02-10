@@ -19,6 +19,8 @@ Example usage:
     print(response.text)
 """
 
+from typing import Any
+
 import httpx
 
 from kaizen.llm.base import LLMProvider, LLMResponse, LLMError
@@ -58,6 +60,7 @@ class OpenAICompatProvider(LLMProvider):
         api_key: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         endpoint: str = DEFAULT_ENDPOINT,
+        max_tokens: int | None = None,
     ) -> None:
         """
         Initialize the OpenAI-compatible provider.
@@ -68,12 +71,14 @@ class OpenAICompatProvider(LLMProvider):
             api_key: Optional API key for authentication.
             timeout: Request timeout in seconds.
             endpoint: API endpoint path (default: /v1/chat/completions).
+            max_tokens: Max tokens for completion (None = server default).
         """
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
         self._endpoint = endpoint
+        self._max_tokens = max_tokens
 
         self._client_timeout = httpx.Timeout(timeout, connect=10.0)
 
@@ -91,6 +96,7 @@ class OpenAICompatProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         """
         Generate a completion using an OpenAI-compatible API.
@@ -101,6 +107,9 @@ class OpenAICompatProvider(LLMProvider):
         Args:
             prompt: The prompt to complete.
             system: Optional system message.
+            **kwargs: Per-call overrides. Recognized: max_tokens (overrides
+                      constructor default), temperature, top_p,
+                      frequency_penalty, presence_penalty, stop, seed.
 
         Returns:
             LLMResponse: The generated response.
@@ -118,6 +127,18 @@ class OpenAICompatProvider(LLMProvider):
             "messages": messages,
         }
 
+        # max_tokens: per-call overrides constructor default
+        max_tokens = kwargs.get("max_tokens", self._max_tokens)
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+
+        # Pass through recognized OpenAI-compatible parameters
+        _OPENAI_PARAMS = {"temperature", "top_p", "frequency_penalty",
+                          "presence_penalty", "stop", "seed"}
+        for key in _OPENAI_PARAMS:
+            if key in kwargs:
+                payload[key] = kwargs[key]
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -125,7 +146,7 @@ class OpenAICompatProvider(LLMProvider):
         url = f"{self._base_url}{self._endpoint}"
 
         try:
-            with httpx.Client(timeout=self._client_timeout) as client:
+            with httpx.Client(timeout=self._client_timeout, follow_redirects=True) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -146,10 +167,15 @@ class OpenAICompatProvider(LLMProvider):
             ) from e
 
         except httpx.HTTPStatusError as e:
+            body = ""
+            try:
+                body = e.response.text[:500]
+            except Exception:
+                pass
             raise LLMError(
                 message=f"API request failed with status {e.response.status_code}",
                 provider="openai_compat",
-                details={"status": e.response.status_code, "error": str(e)},
+                details={"status": e.response.status_code, "error": str(e), "body": body},
             ) from e
 
         # Parse response - try chat/completions format first, then completions

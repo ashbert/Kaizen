@@ -355,6 +355,126 @@ class TestOpenAICompatProviderMocked:
 
 
 # =============================================================================
+# KWARGS OVERRIDE TESTS
+# =============================================================================
+
+
+class TestOpenAICompatProviderKwargs:
+    """Tests for per-call kwargs in OpenAICompatProvider."""
+
+    def test_complete_kwargs_override_constructor_max_tokens(self, monkeypatch) -> None:
+        """Verify per-call max_tokens overrides constructor default."""
+        captured = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": "OK"}}], "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json, headers=None):
+                captured["payload"] = json
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OpenAICompatProvider(
+            base_url="http://localhost:8000",
+            max_tokens=1000,
+        )
+        provider.complete("Test", max_tokens=2000, temperature=0.7)
+
+        assert captured["payload"]["max_tokens"] == 2000
+        assert captured["payload"]["temperature"] == 0.7
+
+    def test_complete_kwargs_without_constructor_max_tokens(self, monkeypatch) -> None:
+        """Verify per-call max_tokens works when constructor has no default."""
+        captured = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": "OK"}}], "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json, headers=None):
+                captured["payload"] = json
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OpenAICompatProvider(base_url="http://localhost:8000")
+        provider.complete("Test", max_tokens=500)
+
+        assert captured["payload"]["max_tokens"] == 500
+
+    def test_complete_constructor_max_tokens_used_when_no_kwargs(self, monkeypatch) -> None:
+        """Verify constructor max_tokens used when no per-call override."""
+        captured = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": "OK"}}], "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json, headers=None):
+                captured["payload"] = json
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OpenAICompatProvider(
+            base_url="http://localhost:8000",
+            max_tokens=4096,
+        )
+        provider.complete("Test")
+
+        assert captured["payload"]["max_tokens"] == 4096
+
+    def test_complete_ignores_unknown_kwargs(self, monkeypatch) -> None:
+        """Verify unrecognized kwargs are silently ignored."""
+        captured = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": "OK"}}], "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json, headers=None):
+                captured["payload"] = json
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OpenAICompatProvider(base_url="http://localhost:8000")
+        provider.complete("Test", fake_param="ignored")
+
+        assert "fake_param" not in captured["payload"]
+
+
+# =============================================================================
 # INTEGRATION TESTS (REQUIRE RUNNING API SERVER)
 # =============================================================================
 

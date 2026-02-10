@@ -51,7 +51,7 @@ class DeterministicLLMProvider(LLMProvider):
         }
         self._default = '[]'
 
-    def complete(self, prompt: str, system: str | None = None) -> LLMResponse:
+    def complete(self, prompt: str, system: str | None = None, **kwargs) -> LLMResponse:
         """Return pre-programmed response."""
         prompt_lower = prompt.lower().strip()
         response = self._responses.get(prompt_lower, self._default)

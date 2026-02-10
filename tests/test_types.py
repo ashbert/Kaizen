@@ -81,7 +81,7 @@ class TestEntryType:
             "state_set", "state_deleted",
             "artifact_written", "artifact_deleted",
             "session_created", "session_loaded", "session_saved",
-            "plan_created", "plan_step_started",
+            "plan_created", "plan_step_started", "plan_step_completed",
             "user_input", "system_note",
         }
         actual_types = {e.value for e in EntryType}

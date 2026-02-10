@@ -321,6 +321,121 @@ class TestOllamaProviderMocked:
 
 
 # =============================================================================
+# KWARGS PASS-THROUGH TESTS
+# =============================================================================
+
+
+class TestOllamaProviderKwargs:
+    """Tests for per-call kwargs in OllamaProvider."""
+
+    def test_complete_with_kwargs(self, monkeypatch) -> None:
+        """Verify complete() passes recognized kwargs to Ollama options."""
+        captured_payload = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"response": "OK", "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json):
+                captured_payload.update(json)
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OllamaProvider()
+        provider.complete("Prompt", temperature=0.5, max_tokens=100)
+
+        assert captured_payload["options"]["temperature"] == 0.5
+        assert captured_payload["options"]["num_predict"] == 100
+
+    def test_complete_maps_max_tokens_to_num_predict(self, monkeypatch) -> None:
+        """Verify max_tokens is mapped to Ollama's num_predict."""
+        captured_payload = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"response": "OK", "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json):
+                captured_payload.update(json)
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OllamaProvider()
+        provider.complete("Prompt", max_tokens=256)
+
+        assert "max_tokens" not in captured_payload.get("options", {})
+        assert captured_payload["options"]["num_predict"] == 256
+
+    def test_complete_ignores_unknown_kwargs(self, monkeypatch) -> None:
+        """Verify complete() silently ignores unrecognized kwargs."""
+        captured_payload = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"response": "OK", "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json):
+                captured_payload.update(json)
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OllamaProvider()
+        provider.complete("Prompt", unknown_param="should be ignored")
+
+        assert "options" not in captured_payload
+
+    def test_complete_no_kwargs_no_options(self, monkeypatch) -> None:
+        """Verify no options key when no kwargs passed."""
+        captured_payload = {}
+
+        class MockResponse:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"response": "OK", "model": "test"}
+
+        class MockClient:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def post(self, url, json):
+                captured_payload.update(json)
+                return MockResponse()
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        provider = OllamaProvider()
+        provider.complete("Prompt")
+
+        assert "options" not in captured_payload
+
+
+# =============================================================================
 # INTEGRATION TESTS (REQUIRE RUNNING OLLAMA)
 # =============================================================================
 
