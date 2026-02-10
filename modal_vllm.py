@@ -14,7 +14,7 @@ Usage:
     # Call the endpoint
     curl -X POST https://<your-app>.modal.run/v1/chat/completions \
         -H "Content-Type: application/json" \
-        -d '{"model": "Qwen/Qwen2.5-72B-Instruct",
+        -d '{"model": "Qwen/Qwen2.5-Coder-32B-Instruct",
              "messages": [{"role": "user", "content": "Hello"}]}'
 
 Requirements:
@@ -24,7 +24,7 @@ Requirements:
 
 import modal
 
-MODEL_ID = "Qwen/Qwen2.5-72B-Instruct-AWQ"
+MODEL_ID = "Qwen/Qwen2.5-Coder-32B-Instruct"
 GPU = "A100-80GB:1"
 
 app = modal.App("kaizen-vllm")
@@ -45,10 +45,10 @@ vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,
     },
-    timeout=600,
+    timeout=900,
     scaledown_window=300,
 )
-@modal.concurrent(max_inputs=32)
+@modal.concurrent(max_inputs=1)
 class Inference:
     """vLLM inference server as a Modal class."""
 
@@ -61,9 +61,8 @@ class Inference:
         self.llm = LLM(
             model=self.model_id,
             trust_remote_code=True,
-            max_model_len=8192,
+            max_model_len=32768,
             gpu_memory_utilization=0.90,
-            quantization="awq",
         )
 
     @modal.method()
