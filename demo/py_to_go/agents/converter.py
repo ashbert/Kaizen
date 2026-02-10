@@ -49,6 +49,30 @@ Rules:
 11. Handle None/null as nil or zero values appropriately
 12. Convert Python dataclasses to Go structs
 13. Convert Python enums to Go const blocks with iota or string constants
+14. Python ABCs/abstract classes become Go interfaces — interfaces ONLY declare method signatures,
+    do NOT add method implementations (receivers) on interface types
+15. Files in the same Go directory share a package — reference sibling types directly without import
+
+CRITICAL: NEVER import the package you are defining. If your file starts with
+"package llm", do NOT import "kaizen/llm". Types from other files in the same
+package directory are available directly without any import.
+
+For Go test files (*_test.go):
+- Use "testing" package: func TestXxx(t *testing.T)
+- Convert pytest classes to subtests: t.Run("test name", func(t *testing.T) { ... })
+- Convert assertions: assert x == y → if got != want { t.Errorf("got %v, want %v", got, want) }
+- Convert pytest.raises(XError) → check err != nil and optionally verify error type/message
+- Convert fixtures to test helper functions with t.Helper()
+- Use t.TempDir() for temporary directories (auto-cleaned)
+- Test files share the same package as the code they test
+- Do NOT import the package you are testing — types are available directly
+
+SQLite in Go:
+- Use "database/sql" with a blank import: import _ "modernc.org/sqlite"
+- Open with: db, err := sql.Open("sqlite", path)
+- Do NOT use sqlite3.Open() or any sqlite3 package directly
+- Use db.Exec(query), db.Query(query), db.QueryRow(query) for operations
+- Use "?" as placeholder (not $1 or :param)
 
 Output ONLY the Go code, no explanations or markdown code blocks.
 Start directly with the package declaration."""
@@ -67,7 +91,16 @@ Additional context from mapping:
 - This is part of the Kaizen agentic session substrate
 - The Go module is named "kaizen"
 - Other packages in the module: types, session, agent, dispatcher, planner, llm, agents
-
+- Internal imports use the module path directly: "kaizen/types", "kaizen/session", "kaizen/llm", etc.
+- Do NOT use "github.com/kaizen/" prefix — the module is "kaizen", not "github.com/kaizen"
+- Do NOT use sub-path imports like "kaizen/llm/base" — Go packages = directories, so use "kaizen/llm"
+- External dependencies (e.g. "github.com/google/uuid") are fine to use
+- In Go, all .go files in the same directory share the same package. Types defined in sibling files
+  are accessible directly without import. For example, if converting llm/ollama.go and LLMResponse
+  is defined in llm/provider.go (same llm package), use LLMResponse directly, NOT types.LLMResponse.
+- YOUR FILE IS IN PACKAGE "{package_name}". DO NOT import "kaizen/{package_name}" — that is a self-import
+  and will cause an import cycle error.
+{converted_context}
 Generate the complete Go file with all necessary imports."""
 
 
@@ -179,11 +212,15 @@ class ConverterAgent(Agent):
         if not package_name or package_name == ".":
             package_name = "main"
 
+        # Read already-converted Go snapshots from session for context
+        converted_context = self._get_converted_context(session, step["step_name"])
+
         # Build the conversion prompt
         user_prompt = CONVERSION_USER_PROMPT.format(
             go_path=go_target,
             package_name=package_name,
             python_code=python_code,
+            converted_context=converted_context,
         )
 
         # Save prompt as artifact for debugging
@@ -267,6 +304,50 @@ class ConverterAgent(Agent):
             },
             agent_id=agent_info.agent_id,
             capability="convert",
+        )
+
+    def _get_converted_context(self, session: Session, current_step: str) -> str:
+        """
+        Read already-converted Go snapshots from session artifacts.
+
+        This gives the LLM context about types, interfaces, and functions
+        already defined in other packages so it can use matching names
+        and correct import paths.
+        """
+        artifacts = session.list_artifacts()
+        context_parts = []
+
+        for name in artifacts:
+            if not name.endswith(".go.snapshot"):
+                continue
+            # Don't include the current file's own snapshot
+            module_name = name.replace(".go.snapshot", "")
+            if module_name == current_step:
+                continue
+
+            try:
+                content = session.read_artifact(name).decode("utf-8")
+                # Get the go_target path from the plan for context
+                plan = session.get("conversion_plan", [])
+                go_path = module_name
+                for step in plan:
+                    if step.get("step_name") == module_name:
+                        go_path = step.get("go_target", module_name)
+                        break
+
+                context_parts.append(
+                    f"Already converted ({go_path}):\n```go\n{content}\n```"
+                )
+            except (KeyError, Exception):
+                continue
+
+        if not context_parts:
+            return ""
+
+        return (
+            "\nAlready-converted Go files in this module — use matching types, "
+            "interfaces, and constants exactly as defined here:\n\n"
+            + "\n\n".join(context_parts) + "\n"
         )
 
     def _clean_go_code(self, code: str) -> str:

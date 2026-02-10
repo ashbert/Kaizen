@@ -100,7 +100,13 @@ class TestRunnerAgent(Agent):
             },
         )
 
-        # First, try to build to catch compile errors
+        # First, resolve dependencies
+        tidy_result = self._run_go_command(
+            ["go", "mod", "tidy"],
+            go_output_path,
+        )
+
+        # Then build to catch compile errors
         build_result = self._run_go_command(
             ["go", "build", "./..."],
             go_output_path,
@@ -113,11 +119,12 @@ class TestRunnerAgent(Agent):
         )
 
         # Combine outputs
-        full_output = f"=== BUILD OUTPUT ===\n{build_result['output']}\n\n"
+        full_output = f"=== TIDY OUTPUT ===\n{tidy_result['output']}\n\n"
+        full_output += f"=== BUILD OUTPUT ===\n{build_result['output']}\n\n"
         full_output += f"=== TEST OUTPUT ===\n{test_result['output']}"
 
         # Determine overall success
-        # Tests pass if both build and test succeed
+        # Tests pass if both build and test succeed (tidy warnings are ok)
         tests_passed = build_result["success"] and test_result["success"]
 
         # Save output as artifact

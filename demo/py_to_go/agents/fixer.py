@@ -25,6 +25,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+# Pattern for self-import lines: "kaizen/pkg" or alias "kaizen/pkg"
+_SELF_IMPORT_TMPL = r'^\s*(?:\w+\s+)?"kaizen/{pkg}"\s*$'
+
 from kaizen import Agent, AgentInfo, InvokeResult, Session
 from kaizen.types import EntryType
 from kaizen.llm import LLMProvider, OllamaProvider
@@ -50,7 +53,33 @@ Common fixes:
 - Undefined types: check if type should be from another package
 - Method signature mismatches: adjust parameters/returns
 - Missing interface implementations: add required methods
-- Syntax errors: fix brackets, semicolons, etc."""
+- Syntax errors: fix brackets, semicolons, etc.
+
+Important:
+- Internal package imports use "kaizen/..." (e.g. "kaizen/types", "kaizen/session"), NOT "github.com/kaizen/..."
+- The Go module is named "kaizen" — all internal cross-package imports start with "kaizen/"
+- You CANNOT define methods on interface types in Go. If you see "invalid receiver type X (pointer or
+  interface type)", the fix is to REMOVE those method implementations entirely — interfaces only declare
+  method signatures, they don't have implementations
+- If "undefined: pkg.Symbol" appears, check the provided package context files for the correct symbol names
+- NEVER import the package you are in. If the file is "package llm", do NOT import "kaizen/llm".
+  Types from other files in the same package are available directly — no import needed.
+- If "multiple-value X in single-value context" appears, use a two-value assignment: `val, err := X(...)`.
+  If the function is being used where only an error is needed (like returning from a session method),
+  replace it with `errors.New("message")` or `fmt.Errorf("message: %v", details)` instead.
+- If a struct field and method have the same name, rename the field to lowercase (unexported) — e.g.
+  `BaseURL string` becomes `baseURL string` and access it via the method `BaseURL()` instead.
+- Types from sibling files in the SAME package are used DIRECTLY without import or package prefix.
+  For example, if LLMResponse is defined in llm/provider.go and you're fixing llm/ollama.go,
+  use `LLMResponse` not `types.LLMResponse`.
+- For test file fixes (*_test.go): use "testing" package, func TestXxx(t *testing.T) pattern,
+  t.Errorf/t.Fatalf for assertions, t.TempDir() for temp dirs. Test files share the package
+  with the code they test — types are available directly.
+- SQLite: use "database/sql" with blank import `_ "modernc.org/sqlite"`.
+  Open with `sql.Open("sqlite", path)`. Do NOT use sqlite3.Open() or any sqlite3 package.
+  Use db.Exec(), db.Query(), db.QueryRow(). Use "?" for placeholders.
+- "no new variables on left side of :=" means the variable already exists in scope — use `=` not `:=`.
+  For example: `_, err := stmt.Exec(...)` should be `_, err = stmt.Exec(...)` if err was declared earlier."""
 
 FIX_USER_PROMPT = """Fix the following Go file based on the error messages.
 
@@ -65,7 +94,7 @@ Error messages:
 ```
 {errors}
 ```
-
+{sibling_context}
 Generate the complete fixed Go file."""
 
 
@@ -276,6 +305,17 @@ class FixerAgent(Agent):
                             errors_by_file[full_path].append(line)
                         break
 
+            # Match import cycle errors: "imports kaizen/pkg from file.go: import cycle"
+            if "import cycle" in line.lower():
+                cycle_match = re.search(r'from\s+(\S+\.go)', line)
+                if cycle_match:
+                    file_name = cycle_match.group(1)
+                    full_path = self._find_file(file_name, go_output_path)
+                    if full_path:
+                        if full_path not in errors_by_file:
+                            errors_by_file[full_path] = []
+                        errors_by_file[full_path].append(line)
+
         return errors_by_file
 
     def _find_file(self, file_name: str, base_path: Path) -> str | None:
@@ -330,12 +370,16 @@ class FixerAgent(Agent):
         # Read current content
         original_code = path.read_text()
 
+        # Read related Go snapshots from session for cross-file context
+        sibling_context = self._get_session_context(session, file_path, errors)
+
         # Build fix prompt
         errors_text = "\n".join(errors[:10])  # Limit errors to avoid huge prompts
         user_prompt = FIX_USER_PROMPT.format(
             file_path=file_path,
             go_code=original_code,
             errors=errors_text,
+            sibling_context=sibling_context,
         )
 
         # Call LLM for fix
@@ -348,6 +392,19 @@ class FixerAgent(Agent):
 
             # Clean up response
             fixed_code = self._clean_go_code(fixed_code)
+
+            # Strip self-imports deterministically
+            pkg = Path(file_path).parent.name
+            if pkg:
+                self_re = re.compile(
+                    _SELF_IMPORT_TMPL.format(pkg=re.escape(pkg))
+                )
+                fixed_code = "\n".join(
+                    l for l in fixed_code.split("\n")
+                    if not self_re.match(l)
+                )
+                fixed_code = re.sub(r'import\s*\(\s*\)', '', fixed_code)
+                fixed_code = re.sub(r'\n{3,}', '\n\n', fixed_code)
 
         except Exception as e:
             return {
@@ -405,6 +462,86 @@ class FixerAgent(Agent):
             return code.strip()
 
         return "\n".join(result_lines)
+
+    def _get_session_context(
+        self,
+        session: Session,
+        file_path: str,
+        errors: list[str],
+    ) -> str:
+        """
+        Read Go snapshots from session artifacts for cross-file context.
+
+        Includes:
+        - Sibling files in the same package (same-package types)
+        - Files from imported packages referenced in errors (cross-package types)
+        """
+        artifacts = session.list_artifacts()
+        plan = session.get("conversion_plan", [])
+
+        # Build a map: go_target → snapshot artifact name
+        target_to_artifact: dict[str, str] = {}
+        for step in plan:
+            art_name = f"{step['step_name']}.go.snapshot"
+            if art_name in artifacts:
+                target_to_artifact[step.get("go_target", "")] = art_name
+
+        # Determine which package this file is in
+        file_pkg = Path(file_path).parent.name  # e.g. "llm", "types", "session"
+
+        same_pkg_parts = []
+        cross_pkg_parts = []
+
+        for go_target, art_name in target_to_artifact.items():
+            target_pkg = Path(go_target).parent.name  # package dir name
+            target_file = Path(go_target).name
+
+            # Skip the file being fixed
+            if go_target.endswith(Path(file_path).name) and target_pkg == file_pkg:
+                continue
+
+            try:
+                content = session.read_artifact(art_name).decode("utf-8")
+            except Exception:
+                continue
+
+            if target_pkg == file_pkg:
+                # Same package — types available directly without import
+                same_pkg_parts.append(
+                    f"Same package file ({target_file}):\n```go\n{content}\n```"
+                )
+            else:
+                # Different package — include if referenced in errors
+                # or always include types package (commonly needed)
+                include = target_pkg == "types"
+                if not include:
+                    for error in errors:
+                        if f"{target_pkg}." in error:
+                            include = True
+                            break
+                if include:
+                    cross_pkg_parts.append(
+                        f"Imported package file ({go_target}):\n```go\n{content}\n```"
+                    )
+
+        parts = []
+        if same_pkg_parts:
+            parts.append(
+                "The following files are in the SAME Go package. "
+                "Types and functions defined here are available directly "
+                "without importing.\n\n" + "\n\n".join(same_pkg_parts)
+            )
+        if cross_pkg_parts:
+            parts.append(
+                "The following files are from imported packages. "
+                "Use the EXACT type/constant names defined here:\n\n"
+                + "\n\n".join(cross_pkg_parts)
+            )
+
+        if not parts:
+            return ""
+
+        return "\n" + "\n\n".join(parts) + "\n"
 
     def _create_fix_summary(self, fixes: list[dict[str, Any]]) -> str:
         """

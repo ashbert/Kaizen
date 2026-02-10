@@ -229,6 +229,7 @@ class PlannerAgent(Agent):
         incremental compilation.
         """
         # Define priority order (lower = earlier)
+        # Source files first (1-9), then test helpers (10), then tests (11+)
         priority = {
             "types": 1,
             "session": 2,
@@ -239,6 +240,16 @@ class PlannerAgent(Agent):
             "planner": 7,
             "reverse": 8,
             "uppercase": 9,
+            "testutil": 10,       # testutil/testutil.go
+            "types_test": 11,
+            "state_test": 12,
+            "trajectory_test": 13,
+            "artifacts_test": 14,
+            "snapshots_test": 15,
+            "persistence_test": 16,
+            "agents_test": 17,
+            "dispatcher_test": 18,
+            "llm_test": 19,
         }
 
         def get_priority(mapping: dict[str, Any]) -> int:

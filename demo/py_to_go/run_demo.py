@@ -25,9 +25,11 @@ after inspection. Cleanup commands are printed at the end.
 """
 
 import os
+import re
 import sys
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -50,7 +52,7 @@ from demo.py_to_go.agents.fixer import FixerAgent
 # Configuration
 REPO_URL = "https://github.com/ashbert/Kaizen.git"
 GO_MODULE_NAME = "kaizen"
-MAX_FIX_ITERATIONS = 5
+MAX_FIX_ITERATIONS = 8
 SESSION_FILE = Path(__file__).parent / "py_to_go.kaizen"
 
 
@@ -115,7 +117,7 @@ def create_temp_directories() -> tuple[str, str]:
 
 
 def clone_repository(src_tmp: str) -> bool:
-    """Clone the Kaizen repository."""
+    """Clone the Kaizen repository (falls back to local source)."""
     print_step(1, "Cloning Kaizen repository")
     print(f"  Target: {src_tmp}")
 
@@ -128,7 +130,18 @@ def clone_repository(src_tmp: str) -> bool:
         print("  ✓ Repository cloned successfully")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"  ✗ Clone failed: {e.stderr.decode()}")
+        print(f"  ⚠ Clone failed: {e.stderr.decode().strip()}")
+        # Fall back to local source + tests
+        import shutil
+        local_src = project_root / "src"
+        local_tests = project_root / "tests"
+        if local_src.exists():
+            shutil.copytree(str(local_src), str(Path(src_tmp) / "src"))
+            if local_tests.exists():
+                shutil.copytree(str(local_tests), str(Path(src_tmp) / "tests"))
+            print("  ✓ Using local source as fallback")
+            return True
+        print("  ✗ No local source available either")
         return False
 
 
@@ -157,16 +170,11 @@ def setup_session(src_tmp: str, out_tmp: str) -> Session:
 
     workspace = os.environ.get("KAIZEN_WORKSPACE")
 
-    # Check for existing session
+    # Always start a fresh session for the demo
+    # (Previous sessions have baked-in temp paths that won't exist)
     if SESSION_FILE.exists():
-        print(f"  Loading existing session: {SESSION_FILE}")
-        session = Session.load(str(SESSION_FILE))
-        print(f"  ✓ Session loaded (ID: {session.session_id[:8]}...)")
-
-        # Update paths for this run (temp dirs are new)
-        session.set("python_repo_clone", src_tmp)
-        session.set("go_output_path", out_tmp)
-        return session
+        print(f"  Removing stale session: {SESSION_FILE}")
+        SESSION_FILE.unlink()
 
     # If workspace is set, use subdirs inside it
     if workspace:
@@ -240,40 +248,580 @@ def run_planning(dispatcher: Dispatcher, session: Session) -> bool:
         return False
 
 
-def run_conversion(dispatcher: Dispatcher, session: Session) -> bool:
-    """Run the converter agent for each plan step."""
-    print_step(6, "Running Converter agent")
-
+def _get_session_go_context(session: Session, current_step: str) -> str:
+    """Read already-converted Go snapshots from session for LLM context."""
+    artifacts = session.list_artifacts()
     plan = session.get("conversion_plan", [])
+    parts = []
+    for name in artifacts:
+        if not name.endswith(".go.snapshot"):
+            continue
+        module_name = name.replace(".go.snapshot", "")
+        if module_name == current_step:
+            continue
+        try:
+            content = session.read_artifact(name).decode("utf-8")
+            go_path = module_name
+            for step in plan:
+                if step.get("step_name") == module_name:
+                    go_path = step.get("go_target", module_name)
+                    break
+            parts.append(f"Already converted ({go_path}):\n```go\n{content}\n```")
+        except Exception:
+            continue
+    if not parts:
+        return ""
+    return (
+        "\nAlready-converted Go files — use matching types, interfaces, "
+        "and constants exactly as defined here:\n\n"
+        + "\n\n".join(parts) + "\n"
+    )
 
-    for i, step in enumerate(plan):
-        print(f"\n  Converting [{i+1}/{len(plan)}]: {step['step_name']}")
 
-        result = dispatcher.dispatch_single("convert", session, {"step_index": i})
+def _strip_self_imports(go_code: str, package_name: str) -> str:
+    """Remove self-imports from Go code.
 
-        if result.success:
-            print(f"    ✓ Converted to: {result.result.get('go_file', 'N/A')}")
-            print(f"      Lines: {result.result.get('lines', 'N/A')}")
-        else:
-            print(f"    ✗ Conversion failed: {result.error}")
-            # Continue with other files even if one fails
+    The LLM sometimes generates imports like `import "kaizen/llm"` inside a file
+    that is already `package llm`. This creates import cycles. We strip them
+    deterministically since prompt-based fixes are unreliable.
+    """
+    # Match both plain and aliased imports: "kaizen/pkg" or alias "kaizen/pkg"
+    self_import_re = re.compile(
+        rf'^\s*(?:\w+\s+)?"kaizen/{re.escape(package_name)}"\s*$'
+    )
+    lines = go_code.split("\n")
+    filtered = []
+    for line in lines:
+        if self_import_re.match(line):
+            continue
+        filtered.append(line)
 
-        # Save after each step
-        session.save(str(SESSION_FILE))
+    # Clean up empty import blocks: import (\n)
+    result = "\n".join(filtered)
+    result = re.sub(r'import\s*\(\s*\)', '', result)
+    # Remove leftover blank lines from removed imports (collapse triple+ newlines)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result
+
+
+def _export_struct_fields(go_code: str) -> str:
+    """Make all struct fields exported (uppercase first letter) and update references.
+
+    The LLM sometimes generates unexported (lowercase) struct fields,
+    which can't be accessed from other packages. Since all Kaizen types
+    are used cross-package, we export all fields and update all references.
+    """
+    # Collect method names to avoid field/method naming collisions
+    method_names: set[str] = set()
+    for m in re.finditer(r'func\s+\([^)]+\)\s+(\w+)\s*\(', go_code):
+        method_names.add(m.group(1))
+
+    # First pass: collect unexported struct field names and fix definitions
+    renames: dict[str, str] = {}
+    lines = go_code.split("\n")
+    result_lines = []
+    in_struct = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.endswith("struct {"):
+            in_struct = True
+            result_lines.append(line)
+            continue
+        if in_struct:
+            if stripped == "}":
+                in_struct = False
+                result_lines.append(line)
+                continue
+            if not stripped or stripped.startswith("//"):
+                result_lines.append(line)
+                continue
+            field_match = re.match(r'^(\s+)([a-z]\w*)(\s+\S.*)', line)
+            if field_match:
+                indent = field_match.group(1)
+                old_name = field_match.group(2)
+                rest = field_match.group(3)
+                new_name = old_name[0].upper() + old_name[1:]
+                # Skip if exporting would collide with a method name
+                if new_name in method_names:
+                    result_lines.append(line)
+                    continue
+                renames[old_name] = new_name
+                result_lines.append(f"{indent}{new_name}{rest}")
+                continue
+        result_lines.append(line)
+
+    if not renames:
+        return go_code
+
+    go_code = "\n".join(result_lines)
+
+    # Second pass: update field accesses (.fieldName) and struct literal keys (fieldName:)
+    for old_name, new_name in renames.items():
+        # Field access: .fieldName → .FieldName
+        go_code = re.sub(
+            rf'\.{re.escape(old_name)}\b',
+            f'.{new_name}',
+            go_code,
+        )
+        # Struct literal keys: `\tfieldName:` → `\tFieldName:`
+        # Only match when the key is indented (struct literal context)
+        go_code = re.sub(
+            rf'^(\s+){re.escape(old_name)}:',
+            rf'\g<1>{new_name}:',
+            go_code,
+            flags=re.MULTILINE,
+        )
+
+    return go_code
+
+
+def _export_all_struct_fields(go_output_path: str) -> int:
+    """Export struct fields in all .go files (cross-file aware).
+
+    Phase 1: Collect ALL struct field names (exported AND unexported) from all files
+    Phase 2: Export fields in definitions and fix lowercase references across all files
+    """
+    go_files = list(Path(go_output_path).rglob("*.go"))
+
+    # Collect method names to avoid collisions
+    all_method_names: set[str] = set()
+    for go_file in go_files:
+        code = go_file.read_text()
+        for m in re.finditer(r'func\s+\([^)]+\)\s+(\w+)\s*\(', code):
+            all_method_names.add(m.group(1))
+
+    # Phase 1: Collect lowercase→Uppercase mappings from ALL struct fields
+    # Include BOTH: unexported fields (to be exported) AND already-exported fields
+    # (to fix cross-file references that still use lowercase names)
+    all_renames: dict[str, str] = {}
+
+    for go_file in go_files:
+        code = go_file.read_text()
+        in_struct = False
+        for line in code.split("\n"):
+            stripped = line.strip()
+            if stripped.endswith("struct {"):
+                in_struct = True
+                continue
+            if in_struct:
+                if stripped == "}":
+                    in_struct = False
+                    continue
+                if not stripped or stripped.startswith("//"):
+                    continue
+                # Match EXPORTED field: e.g. "AgentID string" → map agentID->AgentID
+                exp_match = re.match(r'^\s+([A-Z]\w*)\s+\S', line)
+                if exp_match:
+                    exported_name = exp_match.group(1)
+                    lower_name = exported_name[0].lower() + exported_name[1:]
+                    if lower_name != exported_name:  # skip single-letter
+                        all_renames[lower_name] = exported_name
+                    continue
+                # Match UNEXPORTED field: e.g. "agentID string" → map agentID->AgentID
+                unexp_match = re.match(r'^\s+([a-z]\w*)\s+\S', line)
+                if unexp_match:
+                    old_name = unexp_match.group(1)
+                    new_name = old_name[0].upper() + old_name[1:]
+                    if new_name not in all_method_names:
+                        all_renames[old_name] = new_name
+
+    if not all_renames:
+        return 0
+
+    # Phase 2: Export field definitions + fix references across ALL files
+    modified = 0
+    for go_file in go_files:
+        code = go_file.read_text()
+        # Collect method names for THIS file to avoid collisions
+        file_methods: set[str] = set()
+        for m in re.finditer(r'func\s+\([^)]+\)\s+(\w+)\s*\(', code):
+            file_methods.add(m.group(1))
+
+        # Export unexported field definitions in struct blocks (per-file)
+        new_code = _export_struct_fields(code)
+        # Fix all lowercase field references across files,
+        # but skip renames that would collide with a method in THIS file
+        for old_name, new_name in all_renames.items():
+            if new_name in file_methods:
+                continue  # Skip: would collide with a method in this file
+            # Field access: .fieldName → .FieldName
+            new_code = re.sub(rf'\.{re.escape(old_name)}\b', f'.{new_name}', new_code)
+            # Struct literal keys: fieldName: → FieldName:
+            new_code = re.sub(
+                rf'^(\s+){re.escape(old_name)}:',
+                rf'\g<1>{new_name}:',
+                new_code,
+                flags=re.MULTILINE,
+            )
+        if new_code != code:
+            go_file.write_text(new_code)
+            modified += 1
+    return modified
+
+
+def _is_test_step(step: dict) -> bool:
+    """Check if a plan step is a test file (not source)."""
+    return step.get("go_target", "").endswith("_test.go") or step.get("step_name") == "testutil"
+
+
+def _convert_steps(
+    steps: list[tuple[int, dict]],
+    session: Session,
+    llm: LLMProvider,
+    plan: list[dict],
+    label: str,
+) -> list[str]:
+    """Convert a list of plan steps sequentially. Returns list of converted module names."""
+    from demo.py_to_go.agents.converter import CONVERSION_SYSTEM_PROMPT, CONVERSION_USER_PROMPT
+    import time as _time
 
     converted = session.get("converted_modules", [])
-    print(f"\n  ✓ Conversion complete: {len(converted)}/{len(plan)} modules")
-    return len(converted) > 0
+
+    for i, step in steps:
+        py_path = Path(step["python_full_path"])
+        if not py_path.exists():
+            print(f"    ✗ [{step['step_name']}] File not found: {py_path}")
+            continue
+
+        python_code = py_path.read_text()
+        package_name = Path(step["go_target"]).parent.name
+        if not package_name or package_name == ".":
+            package_name = "main"
+
+        ctx = _get_session_go_context(session, step["step_name"])
+        prompt = CONVERSION_USER_PROMPT.format(
+            go_path=step["go_target"],
+            package_name=package_name,
+            python_code=python_code,
+            converted_context=ctx,
+        )
+
+        # Retry up to 4 times on transient errors
+        last_err = None
+        go_code = None
+        for attempt in range(5):
+            try:
+                print(f"      [{step['step_name']}] sending request (attempt {attempt+1})...", flush=True)
+                response = llm.complete(prompt=prompt, system=CONVERSION_SYSTEM_PROMPT)
+                go_code = response.text.strip()
+                # Clean markdown fences
+                if go_code.startswith("```go"):
+                    go_code = go_code[5:]
+                elif go_code.startswith("```"):
+                    go_code = go_code[3:]
+                if go_code.endswith("```"):
+                    go_code = go_code[:-3]
+                go_code = go_code.strip()
+                go_code = _strip_self_imports(go_code, package_name)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                _time.sleep(2 ** attempt)
+
+        if last_err:
+            print(f"    ✗ [{step['step_name']}]: {last_err}")
+            continue
+
+        # Write Go file
+        go_path = Path(step["go_full_path"])
+        go_path.parent.mkdir(parents=True, exist_ok=True)
+        go_path.write_text(go_code)
+
+        # Store result in session
+        session.write_artifact(f"{step['step_name']}.go.snapshot", go_code.encode("utf-8"))
+        plan[i]["status"] = "completed"
+        converted.append(step["step_name"])
+        session.append(
+            agent_id="converter_agent_v1",
+            entry_type=EntryType.AGENT_COMPLETED,
+            content={
+                "capability": "convert",
+                "step_index": i,
+                "step_name": step["step_name"],
+                "go_file_written": step["go_full_path"],
+                "go_code_lines": len(go_code.split("\n")),
+            },
+        )
+        session.save(str(SESSION_FILE))
+
+        lines = len(go_code.split("\n"))
+        print(f"    ✓ [{step['step_name']}]: {lines} lines")
+        _time.sleep(2)  # Brief pause between conversions
+
+    session.set("conversion_plan", plan)
+    session.set("converted_modules", converted)
+    return converted
 
 
-def run_test_fix_loop(dispatcher: Dispatcher, session: Session) -> bool:
-    """Run tests and fix loop."""
-    print_step(7, "Running Test/Fix loop")
+def run_source_conversion(dispatcher: Dispatcher, session: Session, llm: LLMProvider) -> bool:
+    """Convert source files (not tests) in waves."""
+    print_step(6, "Running source conversion")
 
-    for iteration in range(1, MAX_FIX_ITERATIONS + 1):
-        print(f"\n  --- Iteration {iteration}/{MAX_FIX_ITERATIONS} ---")
+    plan = session.get("conversion_plan", [])
+    source_steps = [(i, step) for i, step in enumerate(plan) if not _is_test_step(step)]
 
-        # Run tests
+    # Wave 1: types and session (foundational)
+    foundational = ["types", "session"]
+    wave1 = [(i, s) for i, s in source_steps if s["step_name"] in foundational]
+    wave2 = [(i, s) for i, s in source_steps if s["step_name"] not in foundational]
+
+    if wave1:
+        print(f"  Wave 1: Converting {len(wave1)} foundational package(s)...")
+        _convert_steps(wave1, session, llm, plan, "foundational")
+
+    if wave2:
+        print(f"  Wave 2: Converting {len(wave2)} remaining source modules...")
+        _convert_steps(wave2, session, llm, plan, "source")
+
+    # Post-conversion deterministic fixups
+    go_output = session.get("go_output_path", "")
+    if go_output:
+        n_imports = _strip_all_self_imports(go_output)
+        n_fields = _export_all_struct_fields(go_output)
+        if n_imports or n_fields:
+            print(f"  Post-fix: stripped self-imports from {n_imports}, exported fields in {n_fields} file(s)")
+
+    session.save(str(SESSION_FILE))
+
+    converted = session.get("converted_modules", [])
+    source_count = len([s for _, s in source_steps])
+    converted_source = len([c for c in converted if not c.endswith("_test") and c != "testutil"])
+    print(f"\n  ✓ Source conversion complete: {converted_source}/{source_count} modules")
+    return converted_source > 0
+
+
+def run_test_conversion(dispatcher: Dispatcher, session: Session, llm: LLMProvider) -> bool:
+    """Convert test files after source compiles."""
+    print_step(8, "Running test file conversion")
+
+    plan = session.get("conversion_plan", [])
+    test_steps = [(i, step) for i, step in enumerate(plan) if _is_test_step(step)]
+
+    if not test_steps:
+        print("  No test files in conversion plan")
+        return True
+
+    print(f"  Converting {len(test_steps)} test file(s) sequentially...")
+    _convert_steps(test_steps, session, llm, plan, "test")
+
+    # Post-conversion fixups for test files too
+    go_output = session.get("go_output_path", "")
+    if go_output:
+        n_imports = _strip_all_self_imports(go_output)
+        n_fields = _export_all_struct_fields(go_output)
+        if n_imports or n_fields:
+            print(f"  Post-fix: stripped self-imports from {n_imports}, exported fields in {n_fields} file(s)")
+
+    session.save(str(SESSION_FILE))
+
+    converted = session.get("converted_modules", [])
+    test_names = {s["step_name"] for _, s in test_steps}
+    converted_tests = len([c for c in converted if c in test_names])
+    print(f"\n  ✓ Test conversion complete: {converted_tests}/{len(test_steps)} files")
+    return converted_tests > 0
+
+
+def _fix_walrus_errors(go_output_path: str, test_output: str) -> int:
+    """Deterministically fix 'no new variables on left side of :=' errors.
+
+    When Go reports this error, we know the exact file and line. We just
+    change ':=' to '=' on that line. This is a common LLM mistake that
+    the fixer often fails to correct.
+
+    Returns the number of lines fixed.
+    """
+    # Pattern: file.go:line:col: no new variables on left side of :=
+    pattern = re.compile(r'(\S+\.go):(\d+):\d+:\s*no new variables on left side of :=')
+    fixes_by_file: dict[str, list[int]] = {}
+
+    for match in pattern.finditer(test_output):
+        file_ref = match.group(1)
+        line_num = int(match.group(2))
+        # Resolve the file path
+        full_path = Path(go_output_path) / file_ref
+        if not full_path.exists():
+            # Try searching
+            for f in Path(go_output_path).rglob(Path(file_ref).name):
+                if str(f).endswith(file_ref):
+                    full_path = f
+                    break
+        if full_path.exists():
+            key = str(full_path)
+            if key not in fixes_by_file:
+                fixes_by_file[key] = []
+            fixes_by_file[key].append(line_num)
+
+    total_fixed = 0
+    for file_path, line_nums in fixes_by_file.items():
+        lines = Path(file_path).read_text().split("\n")
+        changed = False
+        for ln in set(line_nums):
+            idx = ln - 1  # 0-based
+            if 0 <= idx < len(lines) and ":=" in lines[idx]:
+                lines[idx] = lines[idx].replace(":=", "=", 1)
+                changed = True
+                total_fixed += 1
+        if changed:
+            Path(file_path).write_text("\n".join(lines))
+
+    return total_fixed
+
+
+def _fix_unused_imports(go_output_path: str, test_output: str) -> int:
+    """Deterministically remove unused imports reported by the Go compiler.
+
+    Returns the number of imports removed.
+    """
+    # Pattern: file.go:line:col: "pkg" imported and not used
+    pattern = re.compile(r'(\S+\.go):(\d+):\d+:\s*"([^"]+)"\s+imported and not used')
+    removes_by_file: dict[str, set[int]] = {}
+
+    for match in pattern.finditer(test_output):
+        file_ref = match.group(1)
+        line_num = int(match.group(2))
+        full_path = Path(go_output_path) / file_ref
+        if not full_path.exists():
+            for f in Path(go_output_path).rglob(Path(file_ref).name):
+                if str(f).endswith(file_ref):
+                    full_path = f
+                    break
+        if full_path.exists():
+            key = str(full_path)
+            if key not in removes_by_file:
+                removes_by_file[key] = set()
+            removes_by_file[key].add(line_num)
+
+    total_removed = 0
+    for file_path, line_nums in removes_by_file.items():
+        lines = Path(file_path).read_text().split("\n")
+        new_lines = []
+        for i, line in enumerate(lines):
+            if (i + 1) in line_nums:
+                total_removed += 1
+                continue  # Skip this import line
+            new_lines.append(line)
+        if total_removed:
+            # Clean up empty import blocks
+            code = "\n".join(new_lines)
+            code = re.sub(r'import\s*\(\s*\)', '', code)
+            code = re.sub(r'\n{3,}', '\n\n', code)
+            Path(file_path).write_text(code)
+
+    return total_removed
+
+
+def _fix_missing_imports(go_output_path: str, test_output: str) -> int:
+    """Deterministically add missing standard library imports.
+
+    When Go reports 'undefined: net' or similar, and the identifier matches
+    a known stdlib package used as a qualifier (e.g. net.Error), we add the
+    missing import. This fixes the most common fixer oscillation pattern.
+
+    Returns the number of imports added.
+    """
+    # Known Go stdlib packages that are commonly used as qualifiers
+    _STDLIB_PACKAGES = {
+        "net", "os", "io", "fmt", "log", "time", "sync", "sort",
+        "bytes", "strings", "strconv", "errors", "context", "regexp",
+        "math", "path", "filepath", "bufio", "crypto", "hash",
+        "encoding", "json", "xml", "http", "url", "sql",
+    }
+
+    # Pattern: file.go:line:col: undefined: <name>
+    pattern = re.compile(r'(\S+\.go):\d+:\d+:\s*undefined:\s*(\w+)')
+    adds_by_file: dict[str, set[str]] = {}
+
+    for match in pattern.finditer(test_output):
+        file_ref = match.group(1)
+        undefined_name = match.group(2)
+        if undefined_name not in _STDLIB_PACKAGES:
+            continue
+        full_path = Path(go_output_path) / file_ref
+        if not full_path.exists():
+            for f in Path(go_output_path).rglob(Path(file_ref).name):
+                if str(f).endswith(file_ref):
+                    full_path = f
+                    break
+        if full_path.exists():
+            key = str(full_path)
+            if key not in adds_by_file:
+                adds_by_file[key] = set()
+            adds_by_file[key].add(undefined_name)
+
+    total_added = 0
+    for file_path, pkg_names in adds_by_file.items():
+        code = Path(file_path).read_text()
+        for pkg in pkg_names:
+            import_str = f'"{pkg}"'
+            # Special cases: net/http, path/filepath, encoding/json, etc.
+            if pkg == "http":
+                import_str = '"net/http"'
+            elif pkg == "filepath":
+                import_str = '"path/filepath"'
+            elif pkg == "json":
+                import_str = '"encoding/json"'
+            elif pkg == "xml":
+                import_str = '"encoding/xml"'
+            elif pkg == "url":
+                import_str = '"net/url"'
+            elif pkg == "sql":
+                import_str = '"database/sql"'
+
+            # Skip if already imported
+            if import_str in code:
+                continue
+
+            # Add to existing import block or create one
+            if re.search(r'import\s*\(', code):
+                code = re.sub(r'(import\s*\()', rf'\1\n\t{import_str}', code, count=1)
+            else:
+                # Add after package line
+                code = re.sub(
+                    r'(package\s+\w+\s*\n)',
+                    rf'\1\nimport {import_str}\n',
+                    code,
+                    count=1,
+                )
+            total_added += 1
+        if total_added:
+            Path(file_path).write_text(code)
+
+    return total_added
+
+
+def _strip_all_self_imports(go_output_path: str) -> int:
+    """Strip self-imports from all .go files in the output directory.
+
+    Returns the number of files modified.
+    """
+    modified = 0
+    for go_file in Path(go_output_path).rglob("*.go"):
+        pkg_name = go_file.parent.name
+        if not pkg_name:
+            continue
+        code = go_file.read_text()
+        cleaned = _strip_self_imports(code, pkg_name)
+        if cleaned != code:
+            go_file.write_text(cleaned)
+            modified += 1
+    return modified
+
+
+def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label: str, max_iter: int = 8) -> bool:
+    """Run build/test and fix loop.
+
+    Args:
+        step_num: Step number for display
+        label: Label for the step (e.g. "Source compilation fix" or "Test fix")
+        max_iter: Maximum fix iterations
+    """
+    print_step(step_num, f"Running {label} loop")
+
+    for iteration in range(1, max_iter + 1):
+        print(f"\n  --- Iteration {iteration}/{max_iter} ---")
+
+        # Run tests (which includes go build + go test)
         print("  Running tests...")
         test_result = dispatcher.dispatch_single("run_tests", session, {})
 
@@ -286,8 +834,8 @@ def run_test_fix_loop(dispatcher: Dispatcher, session: Session) -> bool:
         summary = session.get("last_test_output", "No output")
         print(f"  ✗ Tests failed: {summary[:200]}")
 
-        if iteration == MAX_FIX_ITERATIONS:
-            print(f"  ✗ Max iterations ({MAX_FIX_ITERATIONS}) reached")
+        if iteration == max_iter:
+            print(f"  ✗ Max iterations ({max_iter}) reached")
             break
 
         # Run fixer
@@ -299,6 +847,38 @@ def run_test_fix_loop(dispatcher: Dispatcher, session: Session) -> bool:
             print(f"    ✓ Fixed {files_fixed} file(s)")
         else:
             print(f"    ✗ Fix failed: {fix_result.error}")
+
+        # Deterministic post-fixes
+        go_output = session.get("go_output_path", "")
+        if go_output:
+            # Read the raw test output for deterministic fixes
+            test_artifact = session.get("last_test_artifact", "")
+            raw_test_output = ""
+            if test_artifact:
+                try:
+                    raw_test_output = session.read_artifact(test_artifact).decode("utf-8")
+                except Exception:
+                    pass
+
+            n_walrus = _fix_walrus_errors(go_output, raw_test_output)
+            n_unused = _fix_unused_imports(go_output, raw_test_output)
+            n_missing = _fix_missing_imports(go_output, raw_test_output)
+            n_imports = _strip_all_self_imports(go_output)
+            n_fields = _export_all_struct_fields(go_output)
+
+            fixes = []
+            if n_walrus:
+                fixes.append(f"{n_walrus} :=→= fix(es)")
+            if n_unused:
+                fixes.append(f"{n_unused} unused import(s)")
+            if n_missing:
+                fixes.append(f"{n_missing} missing import(s)")
+            if n_imports:
+                fixes.append(f"{n_imports} self-import(s)")
+            if n_fields:
+                fixes.append(f"{n_fields} field export(s)")
+            if fixes:
+                print(f"    ✓ Post-fix: {', '.join(fixes)}")
 
         session.save(str(SESSION_FILE))
 
@@ -379,8 +959,11 @@ def main() -> int:
         if model_url:
             llm: LLMProvider = OpenAICompatProvider(
                 base_url=model_url,
-                model=os.environ.get("KAIZEN_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ"),
+                model=os.environ.get("KAIZEN_MODEL_NAME", "Qwen/Qwen2.5-Coder-32B-Instruct"),
                 api_key=os.environ.get("KAIZEN_API_KEY"),
+                endpoint=os.environ.get("KAIZEN_ENDPOINT", ""),
+                timeout=600.0,
+                max_tokens=8192,
             )
         else:
             llm = OllamaProvider(model="llama3.1:8b", timeout=300.0)
@@ -393,14 +976,23 @@ def main() -> int:
             if not run_planning(dispatcher, session):
                 return 1
 
-        # Run conversion
+        # Phase 1: Convert source files
         if session.get("status") in ("planning", "converting"):
-            if not run_conversion(dispatcher, session):
-                print("\n✗ No modules converted. Check errors above.")
+            if not run_source_conversion(dispatcher, session, llm):
+                print("\n✗ No source modules converted. Check errors above.")
                 return 1
 
-        # Run test/fix loop
-        success = run_test_fix_loop(dispatcher, session)
+        # Phase 2: Fix source compilation
+        source_ok = run_fix_loop(dispatcher, session, step_num=7, label="Source compilation fix")
+
+        if source_ok:
+            # Phase 3: Convert test files
+            run_test_conversion(dispatcher, session, llm)
+
+            # Phase 4: Fix test failures
+            success = run_fix_loop(dispatcher, session, step_num=9, label="Test fix")
+        else:
+            success = False
 
         # Final save
         session.set("demo_completed", datetime.now(timezone.utc).isoformat())
