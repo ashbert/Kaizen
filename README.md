@@ -97,6 +97,17 @@ The `demo/py_to_go/` directory contains a self-hosted demo that uses Kaizen to o
 python demo/py_to_go/run_demo.py
 ```
 
+Optional Toolsmith fallback (disabled by default):
+
+```bash
+KAIZEN_TOOLSMITH_ENABLED=1 \
+KAIZEN_TOOLSMITH_CMD=toolsmith \
+python demo/py_to_go/run_demo.py
+```
+
+When enabled, Kaizen can invoke Toolsmith during stalled fixer iterations and
+store Toolsmith outputs as session artifacts and trajectory entries.
+
 ## Tests
 
 ```bash
