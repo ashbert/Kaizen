@@ -29,6 +29,9 @@ import re
 import sys
 import subprocess
 import tempfile
+import hashlib
+import json
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -808,6 +811,300 @@ def _strip_all_self_imports(go_output_path: str) -> int:
     return modified
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment variable with fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _read_last_test_output(session: Session) -> str:
+    """Read raw output from the latest test artifact."""
+    test_artifact = session.get("last_test_artifact", "")
+    if not test_artifact:
+        return ""
+    try:
+        return session.read_artifact(test_artifact).decode("utf-8")
+    except Exception:
+        return ""
+
+
+def _build_failure_signature(output: str) -> str:
+    """Build a stable digest from compiler/test failure lines."""
+    if not output.strip():
+        return "empty"
+
+    normalized_lines: list[str] = []
+    for raw in output.splitlines():
+        line = raw.strip().lower()
+        if not line:
+            continue
+        if ".go:" in line or "undefined:" in line or "imported and not used" in line:
+            line = re.sub(r":[0-9]+:[0-9]+", ":<line>:<col>", line)
+            line = re.sub(r"[0-9]+", "<num>", line)
+            normalized_lines.append(line)
+
+    if not normalized_lines:
+        normalized_lines = [re.sub(r"[0-9]+", "<num>", output.strip().lower())]
+
+    normalized_lines.sort()
+    payload = "\n".join(normalized_lines)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _trailing_repeat_count(items: list[str]) -> int:
+    """Count trailing repeats of the most recent value."""
+    if not items:
+        return 0
+    last = items[-1]
+    count = 0
+    for value in reversed(items):
+        if value != last:
+            break
+        count += 1
+    return count
+
+
+def _toolsmith_trigger_reason(
+    iteration: int,
+    max_iter: int,
+    files_fixed: int,
+    signature_history: list[str],
+) -> str | None:
+    """Return trigger reason for Toolsmith fallback, if any."""
+    if not _env_flag("KAIZEN_TOOLSMITH_ENABLED", default=False):
+        return None
+
+    if files_fixed == 0:
+        return "fixer_no_changes"
+
+    if _trailing_repeat_count(signature_history) >= 2:
+        return "repeat_signature"
+
+    late_budget_threshold = max(1, (max_iter * 3 + 4) // 5)  # ceil(60% * max_iter)
+    if iteration >= late_budget_threshold:
+        return "late_budget"
+
+    return None
+
+
+def _ingest_toolsmith_artifacts(
+    session: Session,
+    artifact_dir: str,
+    invocation_index: int,
+) -> list[str]:
+    """Copy selected Toolsmith artifact files into Kaizen session artifacts."""
+    copied: list[str] = []
+    root = Path(artifact_dir)
+    if not root.exists():
+        return copied
+
+    names = [
+        "final.json",
+        "attempts.json",
+        "baseline.log",
+        "final.log",
+        "summary.txt",
+        "metadata.json",
+        "policy.json",
+        "request.json",
+        "baseline_signature.json",
+        "final_signature.json",
+    ]
+    for name in names:
+        path = root / name
+        if not path.exists():
+            continue
+        artifact_name = f"toolsmith_run_{invocation_index:02d}_{name}"
+        session.write_artifact(artifact_name, path.read_bytes())
+        copied.append(artifact_name)
+
+    return copied
+
+
+def _invoke_toolsmith(
+    session: Session,
+    iteration: int,
+    max_iter: int,
+    label: str,
+    trigger_reason: str,
+) -> dict[str, object]:
+    """Run Toolsmith CLI as an optional fallback and ingest its outputs."""
+    if session.get("toolsmith_unavailable", False):
+        return {"invoked": False, "reason": "unavailable"}
+
+    runs = session.get("toolsmith_runs", [])
+    if not isinstance(runs, list):
+        runs = []
+
+    max_invocations = max(1, _env_int("KAIZEN_TOOLSMITH_MAX_INVOCATIONS", 2))
+    if len(runs) >= max_invocations:
+        return {"invoked": False, "reason": "budget_exhausted"}
+
+    go_output = session.get("go_output_path", "")
+    if not go_output:
+        return {"invoked": False, "reason": "missing_workspace"}
+
+    cmd = os.environ.get("KAIZEN_TOOLSMITH_CMD", "toolsmith")
+    validator = os.environ.get(
+        "KAIZEN_TOOLSMITH_VALIDATOR",
+        "go build ./... && go test ./... -v",
+    )
+    timeout_seconds = max(30, _env_int("KAIZEN_TOOLSMITH_TIMEOUT_SECONDS", 900))
+    invocation_index = len(runs) + 1
+
+    metadata = {
+        "session_id": session.session_id,
+        "fix_iteration": iteration,
+        "max_iterations": max_iter,
+        "phase": label,
+        "trigger_reason": trigger_reason,
+    }
+    artifact_root = str(Path(go_output) / ".toolsmith")
+    run_id = f"{session.session_id[:8]}-i{iteration:02d}-ts{invocation_index:02d}"
+
+    argv = shlex.split(cmd) + [
+        "fix",
+        "--workspace",
+        go_output,
+        "--validator",
+        validator,
+        "--backend",
+        "auto",
+        "--host",
+        "kaizen",
+        "--output",
+        "json",
+        "--run-id",
+        run_id,
+        "--artifact-root",
+        artifact_root,
+        "--metadata-json",
+        json.dumps(metadata, separators=(",", ":")),
+    ]
+
+    session.append(
+        agent_id="toolsmith_fallback",
+        entry_type=EntryType.SYSTEM_NOTE,
+        content={
+            "event": "toolsmith_invoked",
+            "invocation": invocation_index,
+            "trigger_reason": trigger_reason,
+            "run_id": run_id,
+            "command": argv,
+        },
+    )
+
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=go_output,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError:
+        session.set("toolsmith_unavailable", True)
+        session.append(
+            agent_id="toolsmith_fallback",
+            entry_type=EntryType.SYSTEM_NOTE,
+            content={
+                "event": "toolsmith_unavailable",
+                "reason": "command_not_found",
+                "command": cmd,
+            },
+        )
+        return {"invoked": False, "reason": "command_not_found"}
+    except subprocess.TimeoutExpired:
+        return {"invoked": False, "reason": "timeout"}
+
+    stdout_name = f"toolsmith_run_{invocation_index:02d}.stdout.log"
+    stderr_name = f"toolsmith_run_{invocation_index:02d}.stderr.log"
+    session.write_artifact(stdout_name, proc.stdout.encode("utf-8"))
+    session.write_artifact(stderr_name, proc.stderr.encode("utf-8"))
+
+    parsed_payload: dict[str, object] | None = None
+    json_artifact = ""
+    try:
+        parsed = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        if isinstance(parsed, dict):
+            parsed_payload = parsed
+            json_artifact = f"toolsmith_run_{invocation_index:02d}.json"
+            session.write_artifact(
+                json_artifact,
+                json.dumps(parsed_payload, indent=2, sort_keys=True).encode("utf-8"),
+            )
+    except json.JSONDecodeError:
+        parsed_payload = None
+
+    status = "failed"
+    toolsmith_run_id = ""
+    artifact_dir = ""
+    copied_artifacts: list[str] = []
+    if parsed_payload is not None:
+        status = str(parsed_payload.get("status", "failed"))
+        toolsmith_run_id = str(parsed_payload.get("run_id", ""))
+        result = parsed_payload.get("result", {})
+        if isinstance(result, dict):
+            artifact_dir = str(result.get("artifact_dir", ""))
+        if artifact_dir:
+            copied_artifacts = _ingest_toolsmith_artifacts(
+                session=session,
+                artifact_dir=artifact_dir,
+                invocation_index=invocation_index,
+            )
+
+    record = {
+        "invocation": invocation_index,
+        "trigger_reason": trigger_reason,
+        "iteration": iteration,
+        "status": status,
+        "toolsmith_run_id": toolsmith_run_id,
+        "exit_code": proc.returncode,
+        "stdout_artifact": stdout_name,
+        "stderr_artifact": stderr_name,
+        "json_artifact": json_artifact,
+        "copied_artifacts": copied_artifacts,
+    }
+    runs.append(record)
+    session.set("toolsmith_runs", runs)
+
+    session.append(
+        agent_id="toolsmith_fallback",
+        entry_type=EntryType.AGENT_COMPLETED,
+        content={
+            "event": "toolsmith_result",
+            "invocation": invocation_index,
+            "trigger_reason": trigger_reason,
+            "status": status,
+            "toolsmith_run_id": toolsmith_run_id,
+            "exit_code": proc.returncode,
+            "artifact_dir": artifact_dir,
+            "artifacts": [stdout_name, stderr_name, json_artifact] + copied_artifacts,
+        },
+    )
+
+    return {
+        "invoked": True,
+        "status": status,
+        "run_id": toolsmith_run_id,
+        "artifact_dir": artifact_dir,
+        "record": record,
+    }
+
+
 def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label: str, max_iter: int = 8) -> bool:
     """Run build/test and fix loop.
 
@@ -817,6 +1114,7 @@ def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label:
         max_iter: Maximum fix iterations
     """
     print_step(step_num, f"Running {label} loop")
+    signature_history: list[str] = []
 
     for iteration in range(1, max_iter + 1):
         print(f"\n  --- Iteration {iteration}/{max_iter} ---")
@@ -834,7 +1132,34 @@ def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label:
         summary = session.get("last_test_output", "No output")
         print(f"  ✗ Tests failed: {summary[:200]}")
 
+        raw_test_output = _read_last_test_output(session)
+        signature_history.append(_build_failure_signature(raw_test_output))
+
         if iteration == max_iter:
+            trigger_reason = _toolsmith_trigger_reason(
+                iteration=iteration,
+                max_iter=max_iter,
+                files_fixed=0,
+                signature_history=signature_history,
+            )
+            if trigger_reason is not None:
+                ts = _invoke_toolsmith(
+                    session=session,
+                    iteration=iteration,
+                    max_iter=max_iter,
+                    label=label,
+                    trigger_reason=trigger_reason,
+                )
+                if ts.get("invoked"):
+                    ts_status = str(ts.get("status", "unknown"))
+                    print(f"    ✓ Toolsmith fallback run status: {ts_status}")
+                    if ts_status == "passed":
+                        print("    ✓ Re-running tests after Toolsmith fallback...")
+                        confirm = dispatcher.dispatch_single("run_tests", session, {})
+                        if confirm.success and session.get("tests_passed", False):
+                            print("  ✓ All tests passed after Toolsmith fallback!")
+                            session.save(str(SESSION_FILE))
+                            return True
             print(f"  ✗ Max iterations ({max_iter}) reached")
             break
 
@@ -842,8 +1167,9 @@ def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label:
         print("  Running fixer...")
         fix_result = dispatcher.dispatch_single("fix", session, {})
 
+        files_fixed = 0
         if fix_result.success:
-            files_fixed = fix_result.result.get("files_fixed", 0)
+            files_fixed = int(fix_result.result.get("files_fixed", 0))
             print(f"    ✓ Fixed {files_fixed} file(s)")
         else:
             print(f"    ✗ Fix failed: {fix_result.error}")
@@ -879,6 +1205,31 @@ def run_fix_loop(dispatcher: Dispatcher, session: Session, step_num: int, label:
                 fixes.append(f"{n_fields} field export(s)")
             if fixes:
                 print(f"    ✓ Post-fix: {', '.join(fixes)}")
+
+        trigger_reason = _toolsmith_trigger_reason(
+            iteration=iteration,
+            max_iter=max_iter,
+            files_fixed=files_fixed,
+            signature_history=signature_history,
+        )
+        if trigger_reason is not None:
+            ts = _invoke_toolsmith(
+                session=session,
+                iteration=iteration,
+                max_iter=max_iter,
+                label=label,
+                trigger_reason=trigger_reason,
+            )
+            if ts.get("invoked"):
+                ts_status = str(ts.get("status", "unknown"))
+                print(f"    ✓ Toolsmith fallback run status: {ts_status}")
+                if ts_status == "passed":
+                    print("    ✓ Re-running tests after Toolsmith fallback...")
+                    confirm = dispatcher.dispatch_single("run_tests", session, {})
+                    if confirm.success and session.get("tests_passed", False):
+                        print("  ✓ All tests passed after Toolsmith fallback!")
+                        session.save(str(SESSION_FILE))
+                        return True
 
         session.save(str(SESSION_FILE))
 
